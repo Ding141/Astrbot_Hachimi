@@ -1,0 +1,7 @@
+name: astrbot_plugin_personal_assistant_planner
+display_name: 个人助手提醒与复盘
+desc: 管理主动提醒、每日简报和周复盘/下周计划。
+version: 0.5.0
+author: Local Personal Assistant
+repo: ""
+astrbot_version: ">=4.22.0,<5"

@@ -1,0 +1,7 @@
+name: astrbot_plugin_personal_assistant_push
+display_name: 个人助手推送
+desc: 查询天气并预览每日安排推送；推送内容由可扩展的独立模块组合。
+version: 0.5.0
+author: Local Personal Assistant
+repo: ""
+astrbot_version: ">=4.22.0,<5"

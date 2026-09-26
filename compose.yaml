@@ -1,0 +1,66 @@
+name: personal-assistant-astrbot
+
+services:
+  assistant-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_PATH: /app/data/assistant.sqlite3
+      TIMEZONE: ${TIMEZONE:-Asia/Shanghai}
+      WEB_PASSWORD: ${WEB_PASSWORD:?Run ./scripts/init-local.sh first}
+      SESSION_SECRET: ${SESSION_SECRET:?Run ./scripts/init-local.sh first}
+      SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:?Run ./scripts/init-local.sh first}
+      ASTRBOT_API_BASE_URL: http://astrbot:6185/api/v1
+      ASTRBOT_API_KEY: ${ASTRBOT_API_KEY:-}
+      WEATHER_LOCATION_NAME: ${WEATHER_LOCATION_NAME:-}
+      WEATHER_LATITUDE: ${WEATHER_LATITUDE:-}
+      WEATHER_LONGITUDE: ${WEATHER_LONGITUDE:-}
+      NEWS_RSS_URLS: ${NEWS_RSS_URLS:-}
+      BACKUP_DIR: /app/backups
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    volumes:
+      - ./data/service:/app/data
+      - ./backups:/app/backups
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8080}:8000"
+    networks:
+      - assistant-private
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    user: "${APP_UID:-1000}:${APP_GID:-1000}"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  astrbot:
+    image: ${ASTRBOT_IMAGE:-soulter/astrbot:v4.28.1}
+    restart: unless-stopped
+    environment:
+      TZ: ${TIMEZONE:-Asia/Shanghai}
+      ASSISTANT_API_URL: http://assistant-api:8000
+      ASSISTANT_API_TOKEN: ${SERVICE_API_TOKEN:?Run ./scripts/init-local.sh first}
+    volumes:
+      - ./data/astrbot:/AstrBot/data
+      - ./astrbot_plugin_personal_assistant_todo:/AstrBot/data/plugins/astrbot_plugin_personal_assistant_todo:ro
+      - ./astrbot_plugin_personal_assistant_timetable:/AstrBot/data/plugins/astrbot_plugin_personal_assistant_timetable:ro
+      - ./astrbot_plugin_personal_assistant_planner:/AstrBot/data/plugins/astrbot_plugin_personal_assistant_planner:ro
+      - ./astrbot_plugin_personal_assistant_push:/AstrBot/data/plugins/astrbot_plugin_personal_assistant_push:ro
+      - ./astrbot_plugin_pa_common:/AstrBot/data/plugins/assistant_pa_common:ro
+    ports:
+      - "127.0.0.1:${ASTRBOT_WEB_PORT:-6185}:6185"
+    networks:
+      - assistant-private
+    depends_on:
+      assistant-api:
+        condition: service_healthy
+
+networks:
+  assistant-private:
+    driver: bridge

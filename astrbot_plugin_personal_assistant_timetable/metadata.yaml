@@ -1,0 +1,7 @@
+name: astrbot_plugin_personal_assistant_timetable
+display_name: 个人助手课表与日程
+desc: 查询课程、管理课前提醒和课表空档中的个人安排。
+version: 0.5.0
+author: Local Personal Assistant
+repo: ""
+astrbot_version: ">=4.22.0,<5"
