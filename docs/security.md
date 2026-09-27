@@ -18,11 +18,11 @@
 - Docker Compose 使用本项目独立命名的网络、服务和绑定数据目录；API 和数据库不开放宿主机端口。
 - Todo 网页仅映射至 `127.0.0.1:8080`，AstrBot WebUI 仅映射至 `127.0.0.1:6185`。
 - 浏览器会话使用签名的 HttpOnly、SameSite Strict Cookie。登录最多接受 5 次连续失败，15 分钟内限制重试；Cookie 写操作和网页登录要求来源校验。
-- 远程网页访问使用 SSH 本地端口转发。每台获准电脑使用独立密钥；建议用无 sudo 权限的隧道账号，并通过 SSH 服务端规则限制为本地转发和 `127.0.0.1:8080`、`127.0.0.1:6185`。不要将任一应用端口开放到公网。
+- 远程网页访问使用 Tailscale Serve，以 HTTPS 将 tailnet 中的请求代理至回环绑定的网页。启用设备审批，并用 tailnet 访问策略只允许指定电脑访问服务器 TCP `443` 和 `8443`；不要启用 Funnel，也不要将应用端口映射到公网。网页登录仍是独立的认证层，服务器 `.env` 应设置 `COOKIE_SECURE=true`。完整步骤见 [Tailscale 远程访问指南](remote-access.md)。
 - AstrBot 插件通过内部 Bearer 服务令牌调用 API；`SERVICE_API_TOKEN` 属于高权限凭据，应与 `.env` 同等保护。
 - 页面设置了 CSP、反嵌套、MIME 嗅探限制、Referrer Policy 和功能权限响应头；动态文本应经 HTML 转义或使用 `textContent`。
 
-登录限速在单进程内存中计数。它可降低普通暴力尝试，不代替强密码、SSH 密钥访问控制或主机安全更新。
+登录限速在单进程内存中计数。它可降低普通暴力尝试，不代替强密码、Tailscale 访问策略或主机安全更新。
 
 ## 文件上传与容器
 
@@ -33,7 +33,7 @@
 
 ## 密钥轮换和事故处理
 
-若 `.env`、AstrBot 数据目录或备份泄露：先撤销 SSH 隧道密钥或临时关闭相应远程访问，再撤销 AstrBot OpenAPI Key 与模型服务 Key；更换网页登录密码、`SESSION_SECRET` 和 `SERVICE_API_TOKEN`，并重新部署 API/AstrBot。排查聊天日志、命令历史、Git 暂存区和备份副本。已提交的秘密即便后来删掉也可能留在 Git 历史中，应视为已泄漏。
+若 `.env`、AstrBot 数据目录或备份泄露：先在 Tailscale 管理控制台撤销受影响设备或临时关闭对应 Serve 路由，再撤销 AstrBot OpenAPI Key 与模型服务 Key；更换网页登录密码、`SESSION_SECRET` 和 `SERVICE_API_TOKEN`，并重新部署 API/AstrBot。排查聊天日志、命令历史、Git 暂存区和备份副本。已提交的秘密即便后来删掉也可能留在 Git 历史中，应视为已泄漏。
 
 在公共发布前请使用：
 
@@ -47,4 +47,4 @@ git diff --cached --check
 
 ## 安全范围
 
-该项目面向个人或小范围私有使用，不是多租户服务。它不防御已取得服务器管理员/root/Docker daemon 权限的攻击者，也不加密在线 SQLite 数据库。主机磁盘和异地备份应使用操作系统或存储层加密；系统补丁、SSH 服务和密钥管理由服务器管理员负责。
+该项目面向个人或小范围私有使用，不是多租户服务。它不防御已取得服务器管理员/root/Docker daemon 权限的攻击者，也不加密在线 SQLite 数据库。主机磁盘和异地备份应使用操作系统或存储层加密；系统补丁、Tailscale 账号与设备管理由服务器管理员负责。

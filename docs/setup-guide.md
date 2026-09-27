@@ -106,7 +106,7 @@ docker compose up -d assistant-api
 
 本项目文档按 Ubuntu 22.04 或更新版本编写。使用普通登录用户操作，不要以 root 运行 `init-local.sh`；脚本会按当前用户 UID/GID 配置 API 容器的数据目录权限。先按 [Docker 官方说明](https://docs.docker.com/engine/install/ubuntu/)安装 Docker Engine 与 Compose Plugin，并确保普通用户可通过 Docker 或 `sudo docker` 使用 Docker。
 
-服务器只需允许你使用的 SSH 管理连接，以及容器访问外部 DeepSeek API 所需的出站 HTTPS。不要在云安全组或系统防火墙开放 `8000`、`8080`、`6185`、`6199` 等应用端口。仓库 Compose 已将 `8080` 和 `6185` 绑定到服务器回环地址。
+服务器需要出站连接 DeepSeek API 和 Tailscale。远程网页访问使用 Tailscale Serve；不要在云安全组或系统防火墙开放 `8000`、`8080`、`6185`、`6199`、`443` 或 `8443` 等项目/Tailscale Serve 端口。Tailscale Serve 从 tailnet 内接收请求，不需要开放服务器公网入站端口。仓库 Compose 已将 `8080` 和 `6185` 绑定到服务器回环地址。服务器的 SSH 管理方式是独立设置，本指南不要求为网页访问安装或配置 SSH 隧道。
 
 ### 2. 获取代码并生成服务器专用配置
 
@@ -120,7 +120,7 @@ cd Astrbot
 
 记录脚本显示的**服务器网页登录密码**。服务器生成自己的 `.env`、`SESSION_SECRET` 和 `SERVICE_API_TOKEN`；不要从测试电脑复制 `.env` 到服务器。检查 `APP_UID`、`APP_GID` 与服务器运行 `init-local.sh` 的普通用户一致。
 
-通过本指南的 SSH 隧道访问时，浏览器使用本机 HTTP 地址，保留 `COOKIE_SECURE=false`。若曾按其他 HTTPS 代理方案改为 `true`，请改回 `false` 并重启 `assistant-api`。
+首次部署与本机测试保持 `.env` 中的 `COOKIE_SECURE=false`。按后文配置好 Tailscale Serve HTTPS 后，再将服务器 `.env` 改为 `COOKIE_SECURE=true` 并重启 `assistant-api`；本机测试配置继续保持 `false`。
 
 ### 3. 选择是否迁移本机试跑数据
 
@@ -144,7 +144,7 @@ cd Astrbot
    rsync -a data/astrbot/ <用户>@<服务器>:/<服务器仓库路径>/data/astrbot/
    ```
 
-   `data/astrbot/` 可能包含 DeepSeek Key、AstrBot 配置、插件数据和微信登录态，应像密码一样通过可信 SSH 连接传输和保管。若不迁移该目录，就在服务器重新输入模型 Key、重新配置平台并扫码登录。
+   `data/astrbot/` 可能包含 DeepSeek Key、AstrBot 配置、插件数据和微信登录态，应像密码一样通过可信的加密连接传输和保管。若使用 SSH/SCP，需另行确认服务器管理 SSH 与 tailnet 策略允许你的管理电脑连接；本指南的网页访问策略只开放 HTTPS 网页端口，不会自动开放 SSH。若不迁移该目录，就在服务器重新输入模型 Key、重新配置平台并扫码登录。
 
 3. 不迁移 `.env`。服务器保留刚生成的独立网页登录密码、会话密钥和服务令牌。如需提醒，在服务器 AstrBot 中新建 `im` scope Key，写入服务器 `.env` 的 `ASTRBOT_API_KEY`。
 
@@ -166,13 +166,7 @@ curl -fsS http://127.0.0.1:8080/healthz
 
 ### 5. 从自己的电脑管理服务器
 
-用 SSH 本地端口转发访问回环绑定的管理页面。完整的多设备授权和 SSH 服务端限制步骤见 [SSH 远程访问操作指南](remote-access.md)。
-
-```bash
-ssh -N -T -i ~/.ssh/astrbot_pc1 -L 127.0.0.1:18080:127.0.0.1:8080 -L 127.0.0.1:16185:127.0.0.1:6185 astrbot-tunnel@server.example.com
-```
-
-将示例中的密钥文件和服务器域名替换为实际值。保持 SSH 终端运行，在本机浏览器打开 `http://127.0.0.1:18080` 或 `http://127.0.0.1:16185`。如果本机端口已占用，可修改 SSH 命令左侧的本机端口。服务器端应用端口不要通过公网反向代理或安全组直接开放。
+按 [Tailscale 远程访问操作指南](remote-access.md)安装 Tailscale、批准指定电脑、配置访问策略，并通过 Tailscale Serve 为两个回环绑定的管理页面提供 HTTPS 地址。配置服务器 `.env` 为 `COOKIE_SECURE=true` 后，日常只需在电脑上连接 Tailscale 并打开 Serve 状态显示的两个地址；不需要 SSH 隧道命令。不要通过公网反向代理或安全组直接开放项目端口，也不要启用 Funnel。
 
 ## 三、日常维护
 
@@ -204,6 +198,6 @@ AstrBot 镜像默认固定版本；升级 AstrBot 前先检查兼容性，再显
 | DeepSeek 提供商无法连接 | 核对 API Key、账户可用额度和 `https://api.deepseek.com` 地址；确认服务器可出站访问 DeepSeek。 |
 | 模型能答话但不调用项目工具 | 核对模型支持函数调用；启用四个项目插件，确认当前配置文件的人格允许相应函数工具。 |
 | 插件提示无法连接个人助手服务 | 查看 `docker compose logs --tail=100 assistant-api astrbot`；确认 Compose 服务健康并由项目 `up.sh` 启动，不要把容器间地址改成宿主机 `localhost`。 |
-| 本机可用，服务器网页打不开 | `8080` 与 `6185` 是服务器回环端口；使用本指南中的 SSH 隧道，并确认服务器的 SSH 端口可从客户端访问。 |
+| 本机可用，服务器网页打不开 | `8080` 与 `6185` 是服务器回环端口；确认服务器和客户端 Tailscale 在线、设备已批准、访问策略允许 443/8443，并在服务器检查 `sudo tailscale serve status`。 |
 | 主动提醒未发送 | 检查 `.env` 的 `ASTRBOT_API_KEY` 是否为 AstrBot 的 `im` scope Key、最近是否有插件工具成功绑定会话，并查看 API 与 AstrBot 日志。 |
 | 个人微信扫码失败或适配器离线 | 按 AstrBot 当前个人微信文档核对手机微信版本、ClawBot 插件、扫码确认和适配器日志。 |

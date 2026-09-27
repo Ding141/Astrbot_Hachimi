@@ -17,7 +17,7 @@
 ```text
 微信 ── AstrBot + 项目插件 ── 项目私有 Docker 网络 ── FastAPI ── SQLite
 网页 ── 127.0.0.1:8080 ────────────────────────────────┘
-获准电脑浏览器 ── SSH 本地端口转发 ── 服务器 SSH ── 127.0.0.1:8080/6185
+获准电脑浏览器 ── Tailscale Serve HTTPS ── tailnet ── 服务器 127.0.0.1:8080/6185
 ```
 
 - `personal_assistant/api/` 按功能提供版本化 API，`personal_assistant/services/domain.py` 集中共享业务逻辑；入口仍是 `personal_assistant.app:app`。
@@ -69,7 +69,7 @@ sudo docker compose down
 
 ## 服务器上的私有网页访问
 
-远程访问使用 **SSH 本地端口转发**。每台获准电脑使用各自的 SSH 密钥连接服务器，并在本机打开两个网页；服务器上的网页端口仍只绑定 `127.0.0.1`，不向公网开放。服务器只需开放 SSH 管理端口。详细操作（包括专用隧道账号、按密钥授权两三台设备和 SSH 服务端限制）见 [SSH 远程访问操作指南](docs/remote-access.md)。使用该方式时项目 `.env` 保持 `COOKIE_SECURE=false`。
+远程网页访问使用 **Tailscale Serve**：服务器在 tailnet 内为两个网页提供 HTTPS 地址，授权电脑登录同一 tailnet 后即可用浏览器访问。管理页仍只绑定服务器 `127.0.0.1`，不会映射到公网；可以用 Tailscale 设备审批和访问策略把权限限于指定电脑。无需配置网页 SSH 隧道。服务器 `.env` 设置 `COOKIE_SECURE=true`。分步配置见 [Tailscale 远程访问操作指南](docs/remote-access.md)。
 
 ## 备份、恢复与迁移
 
@@ -85,7 +85,7 @@ ls -lh backups/
 
 - 不要提交 `.env`、`data/`、`backups/`、SQLite 文件、课表工作簿、导出文件、AstrBot 会话数据或日志。
 - 导出的 Todo、课表、提醒、复盘和操作记录可能包含个人信息；即使 JSON/CSV 不含 API Key，也应按私密数据保管。
-- AstrBot WebUI 和 API 不直接映射到公网；SSH 隧道只允许获准密钥访问 Todo 网页和 AstrBot WebUI，且这两个网页仍保留各自的登录认证。
+- AstrBot WebUI 和 API 不直接映射到公网；Tailscale Serve 只向 tailnet 提供网页，并可通过访问策略限制到获准设备。这两个网页仍保留各自的登录认证。不要使用 Funnel 发布到公网。
 - 上传的 `.xlsx` 限制压缩文件大小、条目数、单文件及总解压大小和压缩率。
 - 发布前使用 `python3 scripts/check-public-release.py` 检查暂存文件白名单和敏感内容。
 
@@ -107,7 +107,7 @@ PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/pytest -q
 - [架构说明](docs/architecture.md)
 - [部署、备份和迁移](docs/operations.md)
 - [本机测试与服务器部署](docs/setup-guide.md)
-- [SSH 远程访问操作指南](docs/remote-access.md)
+- [Tailscale 远程访问操作指南](docs/remote-access.md)
 - [安全与隐私](docs/security.md)
 - [每日推送模块扩展](docs/push-content-modules.md)
 - [联网搜索与来源说明](docs/web-search.md)
