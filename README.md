@@ -17,7 +17,7 @@
 ```text
 微信 ── AstrBot + 项目插件 ── 项目私有 Docker 网络 ── FastAPI ── SQLite
 网页 ── 127.0.0.1:8080 ────────────────────────────────┘
-                                          Tailscale Serve（可选）
+获准电脑浏览器 ── SSH 本地端口转发 ── 服务器 SSH ── 127.0.0.1:8080/6185
 ```
 
 - `personal_assistant/api/` 按功能提供版本化 API，`personal_assistant/services/domain.py` 集中共享业务逻辑；入口仍是 `personal_assistant.app:app`。
@@ -31,6 +31,8 @@
 ## 新机器部署
 
 支持 Ubuntu 22.04 或更新的 Ubuntu 主机。安装 Docker Engine 与 Compose Plugin 时请使用 [Docker 官方 Ubuntu 安装指南](https://docs.docker.com/engine/install/ubuntu/)。本项目不要求安装系统级 Python 依赖；开发依赖仅用于项目内虚拟环境。
+
+从本机连接 DeepSeek、启用插件和个人微信，到迁移数据并在服务器上安全运行的完整步骤，见[本机测试与服务器部署指南](docs/setup-guide.md)。
 
 ```bash
 git clone <公开仓库地址>
@@ -67,11 +69,7 @@ sudo docker compose down
 
 ## 服务器上的私有网页访问
 
-推荐使用 **Tailscale Serve**，仅在 tailnet 内以 HTTPS 访问 Todo 网页。不要使用 Funnel，不要开放公网端口，也不要转发 AstrBot WebUI `6185`。服务端还保留网页密码登录。
-
-在服务器和获准设备安装并登录 Tailscale 后，按 [Tailscale 私有访问配置](docs/remote-access.md)限制 tailnet 权限、开启 HTTPS，再把 Serve 转发到本机 `127.0.0.1:8080`。服务器的 `.env` 将 `COOKIE_SECURE` 设置为 `true`；AstrBot WebUI 仍仅供服务器本机管理。
-
-Tailscale 首次加入 tailnet、批准设备、访问策略和 HTTPS 设置都需要由服务器管理员和设备使用者手动完成。本仓库没有配置 tailnet 或系统网络规则。
+远程访问使用 **SSH 本地端口转发**。每台获准电脑使用各自的 SSH 密钥连接服务器，并在本机打开两个网页；服务器上的网页端口仍只绑定 `127.0.0.1`，不向公网开放。服务器只需开放 SSH 管理端口。详细操作（包括专用隧道账号、按密钥授权两三台设备和 SSH 服务端限制）见 [SSH 远程访问操作指南](docs/remote-access.md)。使用该方式时项目 `.env` 保持 `COOKIE_SECURE=false`。
 
 ## 备份、恢复与迁移
 
@@ -81,13 +79,13 @@ ls -lh backups/
 ./scripts/restore.sh assistant-YYYYMMDDTHHMMSSZ.sqlite3
 ```
 
-`backups/` 中是 SQLite online backup API 创建的一致性快照。迁移服务器时还要私密转移 AstrBot 的 `data/astrbot/` 和 `.env`；AstrBot 目录可能含微信会话登录态和服务商密钥。新机器重新生成或妥善转移 `.env`，更新 `APP_UID`、`APP_GID`，恢复数据后运行 `./scripts/up.sh`。完整流程见[部署与数据运维](docs/operations.md)。
+`backups/` 中是 SQLite online backup API 创建的一致性快照。迁移服务器时还要私密转移 AstrBot 的 `data/astrbot/`；该目录可能含微信会话登录态和服务商密钥。新机器用 `./scripts/init-local.sh` 生成独立 `.env`，更新 `APP_UID`、`APP_GID`，恢复数据后运行 `./scripts/up.sh`。完整流程见[部署与数据运维](docs/operations.md)。
 
 ## 安全与隐私
 
 - 不要提交 `.env`、`data/`、`backups/`、SQLite 文件、课表工作簿、导出文件、AstrBot 会话数据或日志。
 - 导出的 Todo、课表、提醒、复盘和操作记录可能包含个人信息；即使 JSON/CSV 不含 API Key，也应按私密数据保管。
-- AstrBot WebUI 和 API 不在 tailnet 或公网直接映射；只有 Tailscale Serve 代理 Todo 网页。
+- AstrBot WebUI 和 API 不直接映射到公网；SSH 隧道只允许获准密钥访问 Todo 网页和 AstrBot WebUI，且这两个网页仍保留各自的登录认证。
 - 上传的 `.xlsx` 限制压缩文件大小、条目数、单文件及总解压大小和压缩率。
 - 发布前使用 `python3 scripts/check-public-release.py` 检查暂存文件白名单和敏感内容。
 
@@ -108,7 +106,8 @@ PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/pytest -q
 
 - [架构说明](docs/architecture.md)
 - [部署、备份和迁移](docs/operations.md)
-- [Tailscale 私有远程访问](docs/remote-access.md)
+- [本机测试与服务器部署](docs/setup-guide.md)
+- [SSH 远程访问操作指南](docs/remote-access.md)
 - [安全与隐私](docs/security.md)
 - [每日推送模块扩展](docs/push-content-modules.md)
 - [联网搜索与来源说明](docs/web-search.md)

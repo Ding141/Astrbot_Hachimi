@@ -10,7 +10,7 @@ DeepSeek 模型 API 接收消息，也可以按 AstrBot 提供的函数定义请
 2. 进入“配置”，选择机器人正在使用的人格配置；在“AI → 能力 → 网页搜索”启用搜索。
 3. 搜索服务先选 `AnySearch`。可先不填 API Key 试用匿名额度；若遇到限流或服务不可用，再按需配置该提供方的 Key。
 4. 保存配置，然后在“插件 → 管理行为 → 函数工具”确认网页搜索工具已启用，并在当前人格允许该工具。
-5. 模型提供商应选择支持函数调用的模型。AstrBot 文档列出 DeepSeek v3.2（`deepseek-chat`）为支持模型；不支持工具调用的旧模型可能不会触发搜索。若刚刚修改了提供方或人格配置，重新开始一轮对话再试。
+5. 模型提供商应选择支持函数调用的模型。DeepSeek API 的模型名称和可用能力会更新；使用 AstrBot“保存并获取模型”返回的列表，确认所选模型支持函数调用。旧教程中的 `deepseek-chat` / `deepseek-reasoner` 可能已失效。若刚刚修改了提供方或人格配置，重新开始一轮对话再试。
 6. 用明确请求验收，例如“联网搜索今天的天气，并列出来源”。天气查询不依赖该搜索开关，直接问“今天的天气”会走项目的 `weather_today` 工具；具体地点从项目私有 `.env` 读取。
 
 ## 回复来源约定
@@ -27,4 +27,4 @@ DeepSeek 模型 API 接收消息，也可以按 AstrBot 提供的函数定义请
 
 - [AstrBot 网页搜索配置](https://docs.astrbot.app/en/use/websearch.html)
 - [AstrBot 函数调用与模型兼容性](https://docs.astrbot.app/use/function-calling.html)
-- [DeepSeek 工具调用流程](https://api-docs.deepseek.com/guides/tool_calls/)
+- [DeepSeek 当前模型与 API](https://api-docs.deepseek.com/zh-cn/)、[DeepSeek 工具调用流程](https://api-docs.deepseek.com/guides/tool_calls/)

@@ -1,5 +1,7 @@
 # 部署与数据运维
 
+从本机首次连接 DeepSeek 到服务器迁移的完整步骤见[本机测试与服务器部署操作指南](setup-guide.md)。本文聚焦常见运维和数据迁移细节。
+
 ## 前置条件
 
 Ubuntu 22.04 或更新版本安装 Docker Engine 和 Compose Plugin 时，使用 Docker 官方安装说明：<https://docs.docker.com/engine/install/ubuntu/>。
@@ -15,7 +17,7 @@ Docker daemon 的访问权限接近 root。本项目没有将登录用户加入 
 
 初始化脚本只在项目目录创建 `.env` 与 `data/`、`backups/` 目录。`.env` 权限为当前用户只读写；管理密码和内部令牌由随机数生成器创建。将首次显示的管理密码保存到安全位置。
 
-访问 `http://127.0.0.1:8080` 管理 Todo，访问 `http://127.0.0.1:6185` 配置 AstrBot。端口冲突时修改项目 `.env` 的 `WEB_PORT` 或 `ASTRBOT_WEB_PORT`，不修改系统级网络设置。网页 Compose 端口固定绑定回环地址；服务器远程访问按[Tailscale 私有访问说明](remote-access.md)配置。
+访问 `http://127.0.0.1:8080` 管理 Todo，访问 `http://127.0.0.1:6185` 配置 AstrBot。端口冲突时修改项目 `.env` 的 `WEB_PORT` 或 `ASTRBOT_WEB_PORT`，不修改系统级网络设置。网页 Compose 端口固定绑定回环地址；服务器远程访问按[SSH 隧道操作说明](remote-access.md)配置。
 
 ## 常用操作
 
@@ -54,9 +56,9 @@ sudo docker compose down
 
 1. 本机运行 `./scripts/backup.sh`，再停止服务或确保完成备份。
 2. 安装 Docker/Compose 后，在服务器准备项目文件。可从代码仓库取公开代码；不要把本地 `.git`、`.venv` 或容器缓存当作迁移依赖。
-3. 私密转移 SQLite 备份、AstrBot `data/` 和 `.env`。`.env` 不进入代码仓库。目标机上把 `.env` 的 `APP_UID`、`APP_GID` 设置为 `id -u`、`id -g` 的结果，然后执行 `sudo chown -R "$(id -u):$(id -g)" data/service backups`，让 API 容器继续以目标机普通用户写数据库和备份。远程网页部署时按说明启用 HTTPS 后设置 `COOKIE_SECURE=true`。
+3. 私密转移 SQLite 备份和 AstrBot `data/`；`.env` 不要从旧机器复制，也不要放入代码仓库。在服务器运行 `./scripts/init-local.sh` 生成独立配置，再把 `.env` 中的 `APP_UID`、`APP_GID` 设置为 `id -u`、`id -g` 的结果，然后执行 `sudo chown -R "$(id -u):$(id -g)" data/service backups`，让 API 容器继续以目标机普通用户写数据库和备份。SSH 隧道访问使用本机 HTTP 地址，保持 `COOKIE_SECURE=false`。
 4. 恢复 SQLite，按需重建 API 镜像并启动项目 Compose 服务；核对迁移前备份、服务健康状态与日志。若 AstrBot 容器无法读写迁来的 `data/astrbot/`，按当前固定镜像所使用的容器用户修正该目录属主。检查模型和平台凭据是否仍有效。
-5. 若需从外部设备访问网页，优先配置[Tailscale Serve](remote-access.md)，不要开放公网端口、启用 Funnel 或转发 AstrBot `6185`。
+5. 若需从外部设备访问网页，按[SSH 隧道操作指南](remote-access.md)创建专用隧道账号并为每台授权电脑登记独立公钥。不要开放 Todo 网页或 AstrBot WebUI 的公网端口。
 
 ## 更新与回滚
 

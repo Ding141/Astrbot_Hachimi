@@ -13,6 +13,7 @@ AstrBot + Todo / 课表 / 提醒 / 推送插件 ── private Compose network �
                                                              AstrBot OpenAPI
 
 Browser ── 127.0.0.1:8080 ── authenticated UI and versioned API ──────┘
+Authorized computers ── SSH local forwarding ── server loopback :8080/:6185
 ```
 
 - AstrBot 管理微信适配器、LLM 和 Agent 工具调用；Todo、课表/日程、提醒/复盘和推送预览插件把结构化参数发给个人助手 API。
@@ -49,6 +50,7 @@ Browser ── 127.0.0.1:8080 ── authenticated UI and versioned API ──�
 - `ASTRBOT_API_KEY` 仅供提醒调度器调用 AstrBot `POST /api/v1/im/message`，与 LLM 提供商密钥分开。
 - `/healthz` 不要求认证，只返回服务存活状态；业务端点均需浏览器会话或插件令牌。
 - 管理页和 AstrBot WebUI 默认只映射到 `127.0.0.1`。
+- 远程访问通过 SSH 本地端口转发到服务器回环地址 `127.0.0.1:8080` 和 `127.0.0.1:6185`；网页端口不直接映射到公网。可用专用 SSH 账号、独立设备密钥和 `PermitOpen` 将权限限制为这两个服务，两个网页继续要求各自的登录认证。
 - 公共发布文件使用白名单检查；私有 `.env`、SQLite、课表、备份、导出和 AstrBot 登录态不在发布内容中。
 
 ## 课表处理
