@@ -62,6 +62,12 @@
                 <select id="todo-due" aria-label="截止日期"><option value="">所有日期</option><option value="today">今天</option><option value="upcoming">未来 7 天</option><option value="overdue">已逾期</option></select>
               </div>
             </div>
+            <div class="todo-calendar-toolbar">
+              <div class="calendar-view-switch" role="group" aria-label="任务视图"><button class="secondary active" data-todo-view="list" type="button">清单</button><button class="secondary" data-todo-view="day" type="button">日</button><button class="secondary" data-todo-view="week" type="button">周</button><button class="secondary" data-todo-view="month" type="button">月</button></div>
+              <div class="calendar-navigation"><button id="todo-prev" class="secondary" type="button" aria-label="上一段">‹</button><button id="todo-today" class="secondary" type="button">今天</button><button id="todo-next" class="secondary" type="button" aria-label="下一段">›</button><input id="todo-calendar-date" type="date" aria-label="选择日期"></div>
+            </div>
+            <div id="todo-calendar" class="todo-calendar" hidden></div>
+            <div id="todo-undated" class="undated-todos" hidden></div>
             <div class="table-scroll"><table><thead><tr><th><input id="todo-select-visible" type="checkbox" aria-label="选择当前显示的任务"></th><th>任务</th><th>截止日期</th><th>分类</th><th>优先级</th><th>提醒</th><th></th></tr></thead><tbody id="todo-rows"></tbody></table></div>
             <div id="todo-empty" class="empty-state" hidden><span>✦</span><strong>暂时没有任务</strong><p>添加第一项待办，或换个筛选条件。</p></div>
           </section>
@@ -112,9 +118,10 @@
 
       <section class="view" id="view-courses">
         <section class="panel timetable-panel">
-          <div class="panel-heading"><div><h2>课程安排</h2></div>
+          <div class="panel-heading"><div><h2>课程安排</h2><p>学期按日期自动切换；也可以手动查看其他学期</p></div>
             <div class="schedule-controls"><button id="schedule-prev" class="secondary" type="button">‹</button><button id="schedule-today" class="secondary" type="button">今天</button><button id="schedule-next" class="secondary" type="button">›</button><input id="schedule-date" type="date"><select id="schedule-view-mode"><option value="week">周视图</option><option value="day">日视图</option></select></div>
           </div>
+          <div class="term-controls"><label>查看学期<select id="course-term-select"><option value="">按日期自动选择</option></select></label><label>学期结束日期<input id="term-end-date" type="date"></label><button id="save-term-end" class="secondary" type="button">保存日期</button><small id="term-end-hint"></small></div>
           <div id="schedule-caption" class="course-dayline"></div>
           <div id="schedule-grid" class="schedule-grid"></div>
         </section>
@@ -131,6 +138,7 @@
     <nav class="action-rail" aria-label="快速操作" hidden>
       <button id="add-todo-button" class="rail-action" type="button" data-action-view="todos" title="新建待办"><span>＋</span><small>新建待办</small></button>
       <button id="add-schedule-button" class="rail-action" type="button" data-action-view="courses" title="添加个人安排"><span>＋</span><small>添加安排</small></button>
+      <button id="add-course-button" class="rail-action" type="button" data-action-view="courses" title="添加课程"><span>＋</span><small>添加课程</small></button>
       <button id="import-courses-button" class="rail-action secondary-action" type="button" data-action-view="courses" title="导入课表"><span>⇧</span><small>导入课表</small></button>
     </nav>
   </div>
@@ -143,17 +151,18 @@
         <input id="todo-id" type="hidden">
         <label>任务名称<input id="todo-title" maxlength="300" placeholder="例如：完成数据库实验" required></label>
         <label>备注<textarea id="todo-notes" rows="3" placeholder="补充说明（可选）"></textarea></label>
-        <div class="form-row"><label>分类<input id="todo-category" maxlength="100" placeholder="学习"></label><label>优先级<select id="todo-priority"><option value="1">1 · 低</option><option value="2">2</option><option value="3" selected>3 · 普通</option><option value="4">4</option><option value="5">5 · 高</option></select></label></div>
+        <div class="form-row"><label>分类<select id="todo-category"><option value="">不分类</option><option value="学习">📚 学习</option><option value="锻炼">🏃 锻炼</option><option value="生活">🌿 生活</option><option value="项目">🧩 项目</option><option value="工作">💼 工作</option><option value="其他">✨ 其他</option></select></label><label>重要与紧急<select id="todo-quadrant"><option value="1-auto">重要 · 自动判断紧急度</option><option value="1-0">重要 · 不紧急（计划）</option><option value="1-1">重要 · 紧急（优先处理）</option><option value="0-1">不重要 · 紧急（快速处理）</option><option value="0-0">不重要 · 不紧急（稍后再看）</option></select></label></div>
         <div class="form-row"><label>截止日期<input id="todo-due-date" type="date"></label><label>截止时刻<input id="todo-due-time" type="time"></label></div>
-        <label>重复周期<select id="todo-repeat-frequency"><option value="none">不重复</option><option value="daily">每天</option><option value="weekly">每周</option></select></label>
+        <label>重复周期<select id="todo-repeat-frequency"><option value="none">不重复</option><option value="daily">每天</option><option value="weekly">每周</option><option value="monthly">每月</option></select></label>
         <div id="todo-repeat-options" class="schedule-options" hidden>
-          <div class="form-row"><label>开始日期<input id="todo-repeat-start" type="date"></label><label>结束日期（可选）<input id="todo-repeat-end" type="date"></label></div>
+          <div class="form-row"><label>开始日期<input id="todo-repeat-start" type="date"></label><label>停止日期<input id="todo-repeat-end" type="date"><small>新建或修改重复规则时必须设置。</small></label></div>
+          <label id="todo-repeat-month-day-wrap" hidden>每月几号<input id="todo-repeat-month-day" type="number" min="1" max="31" placeholder="例如 15"><small>遇到没有该日期的月份时，按当月最后一天执行。</small></label>
           <div id="todo-repeat-weekdays" class="weekday-picks"><label><input type="checkbox" value="1">周一</label><label><input type="checkbox" value="2">周二</label><label><input type="checkbox" value="3">周三</label><label><input type="checkbox" value="4">周四</label><label><input type="checkbox" value="5">周五</label><label><input type="checkbox" value="6">周六</label><label><input type="checkbox" value="7">周日</label></div>
           <label class="check-label"><input id="todo-repeat-reminder-enabled" type="checkbox" checked> 开启重复提醒</label>
           <label>每次提醒时刻<input id="todo-repeat-reminder-times" placeholder="08:00, 20:00"><small>填写一个或多个 HH:MM 时刻，用逗号分隔。</small></label>
         </div>
         <label>一次性提醒时间<textarea id="todo-reminders" rows="2" placeholder="每行一个日期时间，例如 2026-09-28T08:00"></textarea><small>可以设置多个提醒；未连接微信时会保留待发送。</small></label>
-        <label>父任务（可选）<select id="todo-parent"><option value="">作为独立任务</option></select></label>
+        <label>子任务<textarea id="todo-subtasks" rows="3" placeholder="每行一个子任务，例如：\n整理资料\n完成初稿"></textarea><small>重复任务会在每一期生成各自独立的子任务。</small></label>
         <div class="form-actions"><button class="primary" type="submit">保存任务</button><button id="todo-cancel-edit" class="secondary" type="button" hidden>取消编辑</button></div>
       </form>
     </section>
@@ -164,10 +173,39 @@
         <label>安排名称<input id="schedule-event-title" maxlength="300" required placeholder="例如：组会、读论文"></label>
         <label>重复<select id="schedule-event-frequency"><option value="once">单次</option><option value="weekly">每周</option></select></label>
         <label id="schedule-event-date-wrap">日期<input id="schedule-event-date" type="date" required></label>
-        <div id="schedule-event-weekly" class="schedule-options" hidden><label>开始日期<input id="schedule-event-start-date" type="date"></label><label>结束日期（可选）<input id="schedule-event-end-date" type="date"></label><div id="schedule-event-weekdays" class="weekday-picks"><label><input type="checkbox" value="1">周一</label><label><input type="checkbox" value="2">周二</label><label><input type="checkbox" value="3">周三</label><label><input type="checkbox" value="4">周四</label><label><input type="checkbox" value="5">周五</label><label><input type="checkbox" value="6">周六</label><label><input type="checkbox" value="7">周日</label></div></div>
+        <div id="schedule-event-weekly" class="schedule-options" hidden><label>开始日期<input id="schedule-event-start-date" type="date"></label><label>停止日期<input id="schedule-event-end-date" type="date"><small>新建或修改重复规则时必须设置。</small></label><div id="schedule-event-weekdays" class="weekday-picks"><label><input type="checkbox" value="1">周一</label><label><input type="checkbox" value="2">周二</label><label><input type="checkbox" value="3">周三</label><label><input type="checkbox" value="4">周四</label><label><input type="checkbox" value="5">周五</label><label><input type="checkbox" value="6">周六</label><label><input type="checkbox" value="7">周日</label></div></div>
         <div class="form-row"><label>开始节次<select id="schedule-event-start-period"></select></label><label>结束节次<select id="schedule-event-end-period"></select></label></div>
         <label>备注<textarea id="schedule-event-notes" rows="2"></textarea></label>
         <div class="form-actions"><button class="primary" type="submit">保存安排</button><button id="schedule-event-cancel" class="secondary" type="button" hidden>取消编辑</button></div>
+      </form>
+    </section>
+    <section id="course-editor" class="drawer-section" hidden>
+      <p class="drawer-intro">整门课程的修改会应用到所选学期后续所有上课日期。每周可按单双周或指定周次。</p>
+      <form id="course-form" class="stack-form">
+        <input id="course-id" type="hidden">
+        <label>所属学期<select id="course-edit-term" required></select></label>
+        <label>课程名称<input id="course-edit-name" maxlength="300" required></label>
+        <div class="form-row"><label>星期<select id="course-edit-weekday"><option value="1">周一</option><option value="2">周二</option><option value="3">周三</option><option value="4">周四</option><option value="5">周五</option><option value="6">周六</option><option value="7">周日</option></select></label><label>单双周<select id="course-edit-parity"><option value="all">每周</option><option value="odd">单周</option><option value="even">双周</option></select></label></div>
+        <div class="form-row"><label>开始节次<input id="course-edit-start-period" type="number" min="1" max="30"></label><label>结束节次<input id="course-edit-end-period" type="number" min="1" max="30"></label></div>
+        <div class="form-row"><label>开始时间（可选）<input id="course-edit-start-time" type="time"></label><label>结束时间（可选）<input id="course-edit-end-time" type="time"></label></div>
+        <label>指定周次（可选）<input id="course-edit-weeks" placeholder="例如 1-8,10-16"><small>留空表示按单双周设置贯穿整个学期。</small></label>
+        <label>地点<input id="course-edit-location" maxlength="300"></label>
+        <label>老师<input id="course-edit-teacher" maxlength="200"></label>
+        <label>备注<textarea id="course-edit-notes" rows="2"></textarea></label>
+        <div class="form-actions"><button class="primary" type="submit">保存课程</button><button id="course-cancel-edit" class="secondary" type="button">取消</button></div>
+      </form>
+    </section>
+    <section id="course-occurrence-editor" class="drawer-section" hidden>
+      <p id="course-occurrence-caption" class="drawer-intro">只调整这一天的课程，不影响整学期的课表。</p>
+      <form id="course-occurrence-form" class="stack-form">
+        <input id="occurrence-course-id" type="hidden">
+        <input id="occurrence-date" type="hidden">
+        <div class="form-row"><label>开始节次<input id="occurrence-start-period" type="number" min="1" max="30"></label><label>结束节次<input id="occurrence-end-period" type="number" min="1" max="30"></label></div>
+        <div class="form-row"><label>开始时间<input id="occurrence-start-time" type="time"></label><label>结束时间<input id="occurrence-end-time" type="time"></label></div>
+        <label>临时地点<input id="occurrence-location" maxlength="300"></label>
+        <label>老师<input id="occurrence-teacher" maxlength="200"></label>
+        <label>备注<textarea id="occurrence-notes" rows="2"></textarea></label>
+        <div class="form-actions"><button class="primary" type="submit">保存本次调整</button><button id="course-occurrence-cancel" class="secondary danger-button" type="button">本次停课</button></div>
       </form>
     </section>
     <section id="course-import-editor" class="drawer-section" hidden>
@@ -176,6 +214,7 @@
         <label>Excel 文件（.xlsx）<input id="course-file" type="file" accept=".xlsx" required></label>
         <label>学期名称<input id="term-name" placeholder="例如：2026 秋季学期" required></label>
         <label>第 1 周周一<input id="term-week1" type="date" required><small>用于将查询日期换算为教学周。</small></label>
+        <label>学期结束日期<input id="term-end" type="date" required><small>已有旧学期会按第18周周日推算，可在课表上校正。</small></label>
         <label>工作表<select id="course-sheet" disabled><option value="">上传文件后选择</option></select></label>
         <label>表头所在行<input id="course-header-row" type="number" min="1" max="100" value="1"></label>
         <div id="course-mapping" class="mapping-grid"></div>

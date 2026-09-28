@@ -55,6 +55,8 @@ def list_schedule_events(
 def create_schedule_event(
     body: ScheduleEventCreate, actor: str = Depends(request_actor)
 ) -> dict[str, Any]:
+    if body.frequency == "weekly" and body.end_date is None:
+        raise HTTPException(status_code=422, detail="新建每周安排需要设置停止日期")
     now = utc_now()
     start_date = body.event_date if body.frequency == "once" else body.start_date
     with connection() as conn:
@@ -126,10 +128,15 @@ def update_schedule_event(
             combined["start_time"] = None
             combined["end_time"] = None
         combined.update(patch_fields)
+        recurrence_changed = any(
+            key in patch_fields for key in ("frequency", "start_date", "end_date", "weekdays")
+        )
+        if combined["frequency"] == "weekly" and recurrence_changed and combined.get("end_date") is None:
+            raise HTTPException(status_code=422, detail="修改每周安排时需要设置停止日期")
         try:
             validated = ScheduleEventCreate.model_validate(combined)
         except ValidationError as exc:
-            raise HTTPException(status_code=422, detail=exc.errors()) from exc
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         event_start = (
             validated.event_date if validated.frequency == "once" else validated.start_date
         )

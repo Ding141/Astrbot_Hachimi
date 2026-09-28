@@ -63,7 +63,8 @@ def test_weekly_todo_series_materializes_occurrences_and_multiple_reminders(
             "title": "每周提交作业",
             "frequency": "weekly",
             "weekdays": [1],
-            "start_date": "2026-09-28",
+            "start_date": "2026-10-05",
+            "end_date": "2026-11-02",
             "due_time": "09:00",
             "reminder_enabled": True,
             "reminder_times": ["08:00", "08:30"],
@@ -76,6 +77,53 @@ def test_weekly_todo_series_materializes_occurrences_and_multiple_reminders(
     occurrence = result["items"][0]
     assert occurrence["recurrence"]["frequency"] == "weekly"
     assert len(occurrence["reminders"]) == 2
+
+
+def test_monthly_todo_series_clamps_month_end_and_materializes_child_templates(authenticated_client) -> None:
+    response = authenticated_client.post("/api/v1/todo-series", json={
+        "title": "每月整理资料", "frequency": "monthly", "month_day": 31,
+        "start_date": "2026-09-30", "end_date": "2026-11-30",
+        "important": True, "urgent": False, "subtasks": ["整理文件", "检查清单"],
+    })
+    assert response.status_code == 201, response.text
+    instances = response.json()["instances"]
+    dates = [item["due_date"] for item in instances]
+    assert dates[:3] == ["2026-09-30", "2026-10-31", "2026-11-30"]
+    assert instances[0]["important"] is True
+    assert instances[0]["urgent"] is False
+    assert len(instances[0]["children"]) == 2
+    assert len({child["id"] for item in instances[:3] for child in item["children"]}) == 6
+    automatic_urgency = authenticated_client.patch(
+        f"/api/v1/todo-series/{response.json()['id']}", json={"urgent": None}
+    )
+    assert automatic_urgency.status_code == 200, automatic_urgency.text
+    assert automatic_urgency.json()["urgent"] is None
+
+
+def test_todo_inline_subtasks_quadrants_and_calendar_endpoint(authenticated_client) -> None:
+    created = authenticated_client.post("/api/v1/todos", json={
+        "title": "准备报告", "category": "学习", "due_date": "2026-09-29",
+        "important": True, "urgent": True, "subtasks": ["列提纲", "补数据"],
+    })
+    assert created.status_code == 201, created.text
+    assert created.json()["important"] is True
+    assert created.json()["urgent"] is True
+    assert len(created.json()["children"]) == 2
+    updated = authenticated_client.patch(f"/api/v1/todos/{created.json()['id']}", json={
+        "subtasks": ["列提纲", "找参考资料"],
+    })
+    assert updated.status_code == 200, updated.text
+    assert [child["title"] for child in updated.json()["children"]] == ["列提纲", "找参考资料"]
+    calendar = authenticated_client.get("/api/v1/todos/calendar?from_date=2026-09-28&to_date=2026-10-04")
+    assert calendar.status_code == 200, calendar.text
+    assert any(item["title"] == "准备报告" for item in calendar.json()["items"])
+
+
+def test_new_recurring_todos_require_end_date(authenticated_client) -> None:
+    response = authenticated_client.post("/api/v1/todo-series", json={
+        "title": "无限任务", "frequency": "daily", "start_date": "2026-09-28",
+    })
+    assert response.status_code == 422
 
 
 def test_cookie_writes_reject_cross_origin(authenticated_client) -> None:

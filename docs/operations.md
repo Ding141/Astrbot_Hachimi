@@ -26,10 +26,9 @@ Docker daemon 的访问权限接近 root。本项目没有将登录用户加入 
 sudo docker compose ps
 sudo docker compose logs -f assistant-api astrbot
 
-# 更新本项目代码和容器
-git pull
-sudo docker compose pull
-sudo docker compose up -d --build
+# 更新本项目代码和容器（详细步骤见下方“更新与回滚”）
+git pull --ff-only origin main
+./scripts/up.sh
 
 # 正常停止本项目容器
 sudo docker compose down
@@ -47,7 +46,7 @@ sudo docker compose down
 
 - `./scripts/backup.sh` 调用 SQLite online backup，快照保存在 `backups/`。
 - `./scripts/restore.sh <文件名>` 要求备份位于项目 `backups/`，先做 SQLite 完整性检查，再以临时文件原子替换当前数据库。
-- 个人助手从旧 schema 升级到 v3 时，会先在 `backups/` 生成带版本号的 SQLite 一致性快照，再创建重复 Todo、个人日程、周复盘、每期提醒覆盖和 14 节时间配置。
+- 个人助手从旧 schema 升级到 v4 时，会先在 `backups/` 生成带版本号的 SQLite 一致性快照。迁移会补充学期结束日期、课程单次例外、Todo 四象限字段和重复任务子项模板；旧学期结束日期按 18 周估算并标记为推测值，建议在网页中核对。
 - JSON 导出包含 Todo、重复系列、提醒、课程、个人日程、周复盘、非秘密设置和操作记录；CSV 可分别导出这些主要资源，不包含密钥。
 - 另行备份 `data/astrbot/` 以保存 AstrBot 平台和提供商配置。该目录可能含有平台登录态与密钥，转移时使用私密、加密的方式。
 - 至少将 `backups/` 复制到另一块磁盘或受控位置；同盘备份无法防止磁盘故障。
@@ -62,6 +61,42 @@ sudo docker compose down
 
 ## 更新与回滚
 
-- 先创建 SQLite 备份，再更新仓库代码；API 源码变化后执行 `sudo docker compose up -d --build assistant-api`。
-- AstrBot 镜像版本固定在 `.env` 的 `ASTRBOT_IMAGE`。升级前检查兼容性和插件说明，再显式修改版本并执行 `sudo docker compose pull astrbot && sudo docker compose up -d astrbot`。
-- 若更新后异常，先回退本项目代码或镜像，再用 `./scripts/restore.sh <备份文件名>` 恢复数据库。不要清理整个 Docker 主机的镜像、网络或 volumes。
+在服务器项目目录按顺序执行。先确认没有尚未提交的服务器端代码修改，并记录当前版本，便于回退：
+
+```bash
+git status --short
+git rev-parse --short HEAD
+./scripts/backup.sh
+git pull --ff-only origin main
+./scripts/up.sh
+```
+
+`git pull --ff-only` 遇到本地分叉或修改时会停止，不会自行制造合并提交。此时先保留并检查本地改动，不要用 `reset --hard` 覆盖。`up.sh` 会构建并启动项目服务；数据库升级时应用会自动在 `backups/` 留一致性快照。
+
+随后重启 AstrBot，让它重新载入项目插件，并检查服务与网页 API：
+
+```bash
+sudo docker compose restart astrbot
+sudo docker compose ps
+curl -fsS http://127.0.0.1:8080/healthz
+sudo docker compose logs --tail=100 assistant-api astrbot
+```
+
+如生产环境设置了不同的 `WEB_PORT`，把健康检查地址中的 `8080` 换成对应端口。网页仍经服务器原有 Tailscale Serve HTTPS 地址访问；只有 API/插件代码更新时，通常不需要重新配置 Serve。
+
+如果新版本无法启动，先记录日志并备份当前数据库，然后停止服务。由于本次 v4 数据库结构不能交给旧版本程序使用，回滚必须同时恢复旧代码和更新前的数据库备份：
+
+1. 找到更新前记录的 Git 提交号和更新前的 SQLite 备份文件。手工备份由 `./scripts/backup.sh` 创建，名称类似 `assistant-20260928T120000Z.sqlite3`。
+2. 停止 Compose 服务：`sudo docker compose down`。如果 API 仍可用且故障后的数据也要保留，可在停止前另运行一次 `./scripts/backup.sh`；服务无法运行时，在停止后把 `data/service/assistant.sqlite3` 复制到 `backups/` 并另存一份日志。
+3. 在项目目录切回旧版本：`git switch --detach HASH`，把 `HASH` 换成升级前 `git rev-parse --short HEAD` 记录的提交号。
+4. 用升级前的数据库备份恢复数据：`./scripts/restore.sh assistant-20260928T120000Z.sqlite3`。把文件名换成 `backups/` 中实际的更新前备份文件名。恢复脚本会检查 SQLite 完整性并清理数据库的 WAL/SHM 辅助文件。
+5. 运行 `./scripts/up.sh`，再运行 `sudo docker compose restart astrbot`，最后检查 `sudo docker compose ps` 和日志。
+
+恢复旧数据库会丢弃该备份之后写入的新数据。先将故障后的数据库和日志另存一份；不要在运行中的数据库上直接覆盖文件，也不要运行 `docker system prune` 或删除 Docker volumes。回滚后仓库处于 detached HEAD；后续恢复更新时先切回 `main`，再按正常更新步骤操作。
+
+AstrBot 镜像版本固定在 `.env` 的 `ASTRBOT_IMAGE`。升级 AstrBot 镜像前检查兼容性和插件说明，再显式修改服务器 `.env` 并执行：
+
+```bash
+sudo docker compose pull astrbot
+sudo docker compose up -d astrbot
+```

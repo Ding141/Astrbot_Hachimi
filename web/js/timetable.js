@@ -45,14 +45,31 @@ async function loadSchedule() {
   const anchor = $("#schedule-date").value || localToday();
   appState.scheduleAnchor = anchor;
   try {
-    const result = await api(`/api/v1/courses/week?week_start=${encodeURIComponent(anchor)}`);
+    const termResult = await api("/api/v1/terms");
+    appState.terms = termResult.items || [];
+    appState.activeTermId = termResult.active_term_id;
+    const termSelect = $("#course-term-select");
+    const selected = appState.selectedTermId || "";
+    termSelect.innerHTML = `<option value="">按日期自动选择</option>${appState.terms.map((term) => `<option value="${term.id}">${escapeHtml(term.name)} · ${escapeHtml(term.week1_monday)} 至 ${escapeHtml(term.end_date || "未设结束日期")}${term.end_date_inferred ? "（推算）" : ""}</option>`).join("")}`;
+    termSelect.value = selected;
+    const editTerm = $("#course-edit-term");
+    if (editTerm) editTerm.innerHTML = appState.terms.map((term) => `<option value="${term.id}">${escapeHtml(term.name)}</option>`).join("");
+    const dateTerm = appState.terms.find((term) => term.week1_monday <= anchor && (!term.end_date || term.end_date >= anchor));
+    const selectedTerm = selected ? appState.terms.find((term) => String(term.id) === String(selected)) : dateTerm;
+    $("#term-end-date").value = selectedTerm?.end_date || "";
+    $("#term-end-date").disabled = !selectedTerm;
+    $("#save-term-end").disabled = !selectedTerm;
+    $("#term-end-hint").textContent = selectedTerm?.end_date_inferred ? "结束日期由第18周周日推算；请按实际校历核对。" : selectedTerm ? `正在编辑：${selectedTerm.name}` : "这一天没有对应学期";
+    const termParam = selected ? `&term_id=${encodeURIComponent(selected)}` : "";
+    const result = await api(`/api/v1/courses/week?week_start=${encodeURIComponent(anchor)}${termParam}`);
+    appState.courses = result.days.flatMap((day) => [...day.courses, ...(day.cancelled_courses || [])].map((course) => ({ ...course, date: day.date })));
     const dayMode = $("#schedule-view-mode").value === "day";
     const shownDays = dayMode ? result.days.filter((day) => day.date === anchor) : result.days;
     $("#schedule-caption").innerHTML = `<span>${escapeHtml(result.week_start)} 至 ${escapeHtml(result.week_end)}</span><strong>${escapeHtml(result.term || "未导入学期")}${result.week ? ` · 第 ${result.week} 周` : ""}</strong>`;
     const grid = $("#schedule-grid");
     grid.classList.toggle("day-mode", dayMode);
     const columns = shownDays.length || 1;
-    const header = shownDays.map((day) => `<div class="timetable-date-head ${day.date === localToday() ? "is-today" : ""}"><strong>${escapeHtml(weekdayLabels[(new Date(`${day.date}T12:00:00`).getDay() + 6) % 7])}</strong><span>${escapeHtml(day.date.slice(5))}</span>${day.week ? `<small>第 ${day.week} 周</small>` : ""}</div>`).join("");
+    const header = shownDays.map((day) => `<div class="timetable-date-head ${day.date === localToday() ? "is-today" : ""}"><strong>${escapeHtml(weekdayLabels[(new Date(`${day.date}T12:00:00`).getDay() + 6) % 7])}</strong><span>${escapeHtml(day.date.slice(5))}</span>${day.week ? `<small>第 ${day.week} 周</small>` : ""}${(day.cancelled_courses || []).map((item) => `<small class="cancelled-course-note">已停课：${escapeHtml(item.course_name)} <button class="course-restore-action" type="button" data-id="${item.id}" data-date="${day.date}">恢复</button></small>`).join("")}</div>`).join("");
     const tracks = shownDays.map((day) => {
       const entries = [
         ...day.courses.map((item) => ({ ...item, kind: "course", start_period: Number(item.start_period || periodForClock(item.start_time) || 1), end_period: Number(item.end_period || periodForClock(item.end_time, true) || item.start_period || periodForClock(item.start_time) || 1) })),
@@ -79,7 +96,7 @@ async function loadSchedule() {
         const end = Math.max(start, Math.min(14, item.end_period));
         const range = `${PERIOD_TIMES[start - 1][0]}–${PERIOD_TIMES[end - 1][1]}`;
         if (item.kind === "event") return `<article class="timetable-entry personal-entry" style="grid-column:${item.lane + 1};grid-row:${start}/${end + 1}"><div class="entry-time">第${start}–${end}节 · ${range}</div><strong>${escapeHtml(item.title)}</strong>${item.frequency === "weekly" ? "<small>每周重复</small>" : ""}<div class="entry-actions"><button class="event-edit" type="button" data-id="${item.id}">编辑</button><button class="event-delete" type="button" data-id="${item.id}">删除</button></div></article>`;
-        return `<article class="timetable-entry course-entry" style="grid-column:${item.lane + 1};grid-row:${start}/${end + 1}"><div class="entry-time">第${start}–${end}节 · ${range}</div><strong>${escapeHtml(item.course_name)}</strong><small>${[item.location && `地点 ${item.location}`, item.teacher && `老师 ${item.teacher}`].filter(Boolean).map(escapeHtml).join(" · ") || "未填写地点和教师"}</small><button class="course-alert ${item.reminder_enabled ? "enabled" : ""}" type="button" title="${item.reminder_enabled ? "关闭课前提醒" : "开启课前提醒"}" aria-label="${item.reminder_enabled ? "关闭课前提醒" : "开启课前提醒"}" data-id="${item.id}" data-enabled="${item.reminder_enabled ? "1" : "0"}" data-lead="${item.reminder_lead_minutes || 10}">${item.reminder_enabled ? `🔔 ${item.reminder_lead_minutes || 10}分` : "＋ 提醒"}</button></article>`;
+        return `<article class="timetable-entry course-entry" style="grid-column:${item.lane + 1};grid-row:${start}/${end + 1}"><div class="entry-time">第${start}–${end}节 · ${range}</div><strong>${escapeHtml(item.course_name)}</strong><small>${[item.location && `地点 ${item.location}`, item.teacher && `老师 ${item.teacher}`].filter(Boolean).map(escapeHtml).join(" · ") || "未填写地点和教师"}</small><button class="course-alert ${item.reminder_enabled ? "enabled" : ""}" type="button" title="${item.reminder_enabled ? "关闭课前提醒" : "开启课前提醒"}" aria-label="${item.reminder_enabled ? "关闭课前提醒" : "开启课前提醒"}" data-id="${item.id}" data-enabled="${item.reminder_enabled ? "1" : "0"}" data-lead="${item.reminder_lead_minutes || 10}">${item.reminder_enabled ? `🔔 ${item.reminder_lead_minutes || 10}分` : "＋ 提醒"}</button><div class="course-form-actions"><button class="course-edit-action" type="button" data-id="${item.id}">编辑学期课程</button><button class="course-occurrence-action" type="button" data-id="${item.id}" data-date="${day.date}">调整本次</button><button class="course-delete-action" type="button" data-id="${item.id}">删除整门课</button>${item.exception ? `<button class="course-restore-action" type="button" data-id="${item.id}" data-date="${day.date}">恢复本次</button>` : ""}</div></article>`;
       }).join("");
       return `<section class="timetable-day-track" style="--lanes:${laneCount}">${emptySlots.join("")}${cards}</section>`;
     }).join("");
@@ -87,6 +104,10 @@ async function loadSchedule() {
     grid.style.setProperty("--day-count", String(columns));
     grid.innerHTML = `<div class="timetable-head"><div class="period-head">节次</div>${header}</div><div class="timetable-body"><div class="period-axis">${axis}</div>${tracks}</div>`;
     grid.querySelectorAll(".course-alert").forEach((button) => button.addEventListener("click", () => toggleCourseAlert(button.dataset.id, button.dataset.enabled === "1", Number(button.dataset.lead))));
+    grid.querySelectorAll(".course-edit-action").forEach((button) => button.addEventListener("click", () => openCourseEditor(Number(button.dataset.id))));
+    grid.querySelectorAll(".course-delete-action").forEach((button) => button.addEventListener("click", () => deleteCourse(Number(button.dataset.id))));
+    grid.querySelectorAll(".course-occurrence-action").forEach((button) => button.addEventListener("click", () => openCourseOccurrenceEditor(Number(button.dataset.id), button.dataset.date)));
+    grid.querySelectorAll(".course-restore-action").forEach((button) => button.addEventListener("click", () => restoreCourseOccurrence(Number(button.dataset.id), button.dataset.date)));
     grid.querySelectorAll(".event-edit").forEach((button) => button.addEventListener("click", () => editScheduleEvent(Number(button.dataset.id), result.days)));
     grid.querySelectorAll(".event-delete").forEach((button) => button.addEventListener("click", () => deleteScheduleEvent(button.dataset.id)));
     grid.querySelectorAll(".time-slot").forEach((button) => button.addEventListener("click", () => openNewScheduleEvent(button.dataset.date, Number(button.dataset.period))));
@@ -109,6 +130,167 @@ async function toggleCourseAlert(id, enabled, currentLead = 10) {
   } catch (error) { toast(error.message, "error"); }
 }
 
+async function saveTermEndDate() {
+  const selected = $("#course-term-select").value;
+  const anchor = $("#schedule-date").value || localToday();
+  const term = selected ? appState.terms.find((item) => String(item.id) === selected) : appState.terms.find((item) => item.week1_monday <= anchor && (!item.end_date || item.end_date >= anchor));
+  if (!term) { toast("请先导入或选择一个学期。", "error"); return; }
+  const endDate = $("#term-end-date").value;
+  if (!endDate || endDate < term.week1_monday) { toast("学期结束日期不能早于第1周周一。", "error"); return; }
+  try {
+    await api(`/api/v1/terms/${term.id}`, { method: "PATCH", body: JSON.stringify({ end_date: endDate }) });
+    toast("学期结束日期已保存。");
+    await loadSchedule();
+  } catch (error) { toast(error.message, "error"); }
+}
+
+function compressWeeks(weeks = []) {
+  const values = [...new Set(weeks)].sort((a, b) => a - b);
+  if (!values.length) return "";
+  const ranges = [];
+  for (let index = 0; index < values.length;) {
+    let end = index;
+    while (end + 1 < values.length && values[end + 1] === values[end] + 1) end += 1;
+    ranges.push(end === index ? String(values[index]) : `${values[index]}-${values[end]}`);
+    index = end + 1;
+  }
+  return ranges.join(",");
+}
+
+function parseWeeks(value) {
+  const result = new Set();
+  for (const part of value.split(/[,，\s]+/).filter(Boolean)) {
+    const match = part.match(/^(\d{1,2})(?:-(\d{1,2}))?$/);
+    if (!match) throw new Error("周次请使用 1-8,10-16 这样的格式。");
+    const first = Number(match[1]);
+    const last = Number(match[2] || match[1]);
+    if (first < 1 || last > 40 || last < first) throw new Error("周次范围需在1到40之间。");
+    for (let week = first; week <= last; week += 1) result.add(week);
+  }
+  return [...result].sort((a, b) => a - b);
+}
+
+async function openCourseEditor(courseId = null) {
+  const form = $("#course-form");
+  form.reset();
+  $("#course-id").value = "";
+  $("#course-edit-start-period").value = "";
+  $("#course-edit-end-period").value = "";
+  $("#course-edit-weeks").value = "";
+  $("#course-edit-parity").value = "all";
+  $("#course-edit-term").disabled = Boolean(courseId);
+  if (!appState.terms?.length) await loadSchedule();
+  const selectedTerm = appState.selectedTermId || appState.activeTermId || appState.terms?.[0]?.id;
+  $("#course-edit-term").value = String(selectedTerm || "");
+  if (courseId) {
+    try {
+      const course = await api(`/api/v1/courses/${courseId}`);
+      $("#course-id").value = course.id;
+      $("#course-edit-term").value = String(course.term_id);
+      $("#course-edit-name").value = course.course_name;
+      $("#course-edit-weekday").value = String(course.weekday);
+      $("#course-edit-parity").value = course.week_parity;
+      $("#course-edit-start-period").value = course.start_period || "";
+      $("#course-edit-end-period").value = course.end_period || "";
+      $("#course-edit-start-time").value = course.start_time || "";
+      $("#course-edit-end-time").value = course.end_time || "";
+      $("#course-edit-weeks").value = compressWeeks(course.weeks);
+      $("#course-edit-location").value = course.location || "";
+      $("#course-edit-teacher").value = course.teacher || "";
+      $("#course-edit-notes").value = course.notes || "";
+    } catch (error) { toast(error.message, "error"); return; }
+  }
+  openDrawer("course-editor", courseId ? "编辑整学期课程" : "添加课程");
+}
+
+async function submitCourse(event) {
+  event.preventDefault();
+  const id = $("#course-id").value;
+  const startPeriod = Number($("#course-edit-start-period").value || 0);
+  const endPeriod = Number($("#course-edit-end-period").value || 0);
+  const startTime = $("#course-edit-start-time").value;
+  const endTime = $("#course-edit-end-time").value;
+  if (Boolean(startPeriod) !== Boolean(endPeriod) || Boolean(startTime) !== Boolean(endTime)) { toast("开始和结束节次、或开始和结束时间都要成对填写。", "error"); return; }
+  if (!startPeriod && !startTime) { toast("课程需要填写节次，或开始和结束时间。", "error"); return; }
+  let weeks;
+  try { weeks = parseWeeks($("#course-edit-weeks").value); }
+  catch (error) { toast(error.message, "error"); return; }
+  const payload = {
+    course_name: $("#course-edit-name").value.trim(), weekday: Number($("#course-edit-weekday").value),
+    weeks, week_parity: $("#course-edit-parity").value,
+    location: $("#course-edit-location").value, teacher: $("#course-edit-teacher").value,
+    notes: $("#course-edit-notes").value,
+  };
+  if (startPeriod) Object.assign(payload, { start_period: startPeriod, end_period: endPeriod });
+  if (startTime) Object.assign(payload, { start_time: startTime, end_time: endTime });
+  try {
+    const result = await api(id ? `/api/v1/courses/${id}` : "/api/v1/courses", {
+      method: id ? "PATCH" : "POST",
+      body: JSON.stringify(id ? payload : { ...payload, term_id: Number($("#course-edit-term").value) }),
+    });
+    toast(id ? `已更新「${result.course_name}」` : `已添加「${result.course_name}」`);
+    closeDrawer();
+    await loadSchedule();
+  } catch (error) { toast(error.message, "error"); }
+}
+
+async function deleteCourse(courseId) {
+  try {
+    const course = await api(`/api/v1/courses/${courseId}`);
+    if (!window.confirm(`确认删除整门课程「${course.course_name}」？这会删除它在整个学期的排课。`)) return;
+    await api(`/api/v1/courses/${courseId}?confirm=true`, { method: "DELETE" });
+    toast(`已删除「${course.course_name}」`);
+    await loadSchedule();
+  } catch (error) { toast(error.message, "error"); }
+}
+
+function openCourseOccurrenceEditor(courseId, occurrenceDate) {
+  const course = (appState.courses || []).find((item) => item.id === courseId && item.date === occurrenceDate);
+  if (!course) { toast("没找到这一天的课程记录，请刷新课表。", "error"); return; }
+  $("#occurrence-course-id").value = courseId;
+  $("#occurrence-date").value = occurrenceDate;
+  $("#course-occurrence-caption").textContent = `只调整「${course.course_name}」在 ${occurrenceDate} 的本次安排。`;
+  $("#occurrence-start-period").value = course.start_period || "";
+  $("#occurrence-end-period").value = course.end_period || "";
+  $("#occurrence-start-time").value = course.start_time || "";
+  $("#occurrence-end-time").value = course.end_time || "";
+  $("#occurrence-location").value = course.location || "";
+  $("#occurrence-teacher").value = course.teacher || "";
+  $("#occurrence-notes").value = course.notes || "";
+  openDrawer("course-occurrence-editor", "调整本次课程");
+}
+
+async function submitCourseOccurrence(event) {
+  event.preventDefault();
+  const id = $("#occurrence-course-id").value;
+  const day = $("#occurrence-date").value;
+  const startPeriod = Number($("#occurrence-start-period").value || 0);
+  const endPeriod = Number($("#occurrence-end-period").value || 0);
+  const startTime = $("#occurrence-start-time").value;
+  const endTime = $("#occurrence-end-time").value;
+  if (Boolean(startPeriod) !== Boolean(endPeriod) || Boolean(startTime) !== Boolean(endTime)) { toast("开始和结束节次或时间需要成对提供。", "error"); return; }
+  const payload = { action: "override", location: $("#occurrence-location").value, teacher: $("#occurrence-teacher").value, notes: $("#occurrence-notes").value };
+  if (startPeriod) Object.assign(payload, { start_period: startPeriod, end_period: endPeriod });
+  else if (startTime) Object.assign(payload, { start_time: startTime, end_time: endTime });
+  else { toast("请提供调整后的节次，或开始和结束时间。", "error"); return; }
+  try { await api(`/api/v1/courses/${id}/occurrences/${day}`, { method: "PUT", body: JSON.stringify(payload) }); toast("本次课表调整已保存。🗓️"); closeDrawer(); await loadSchedule(); }
+  catch (error) { toast(error.message, "error"); }
+}
+
+async function cancelCourseOccurrence() {
+  const id = $("#occurrence-course-id").value;
+  const day = $("#occurrence-date").value;
+  if (!window.confirm(`确认只取消课程 #${id} 在 ${day} 这一次上课？`)) return;
+  try { await api(`/api/v1/courses/${id}/occurrences/${day}`, { method: "PUT", body: JSON.stringify({ action: "cancelled" }) }); toast("这次课程已标记为停课。" ); closeDrawer(); await loadSchedule(); }
+  catch (error) { toast(error.message, "error"); }
+}
+
+async function restoreCourseOccurrence(courseId, day) {
+  if (!window.confirm(`恢复课程 #${courseId} 在 ${day} 的原安排？`)) return;
+  try { await api(`/api/v1/courses/${courseId}/occurrences/${day}`, { method: "DELETE" }); toast("已恢复这一天的原课表。"); await loadSchedule(); }
+  catch (error) { toast(error.message, "error"); }
+}
+
 function resetScheduleEventForm(close = true) {
   $("#schedule-event-form").reset();
   $("#schedule-event-id").value = "";
@@ -118,12 +300,15 @@ function resetScheduleEventForm(close = true) {
   $("#schedule-event-date").required = true;
   $("#schedule-event-start-date").required = false;
   $("#schedule-event-cancel").hidden = true;
+  $("#schedule-event-weekly").querySelector(".legacy-unbounded-note")?.remove();
+  appState.editingScheduleEvent = null;
   if (close) closeDrawer();
 }
 
 function editScheduleEvent(id, days) {
   const event = days.flatMap((day) => day.events).find((item) => item.id === id);
   if (!event) return;
+  appState.editingScheduleEvent = event;
   $("#schedule-event-id").value = String(id);
   $("#schedule-event-title").value = event.title;
   $("#schedule-event-notes").value = event.notes || "";
@@ -131,6 +316,12 @@ function editScheduleEvent(id, days) {
   $("#schedule-event-date").value = event.event_date || event.date;
   $("#schedule-event-start-date").value = event.start_date || "";
   $("#schedule-event-end-date").value = event.end_date || "";
+  const legacyNote = $("#schedule-event-weekly").querySelector(".legacy-unbounded-note");
+  if (legacyNote) legacyNote.remove();
+  if (event.legacy_unbounded) {
+    const note = document.createElement("small"); note.className = "legacy-unbounded-note"; note.textContent = "这是旧的无限重复安排；修改重复规则前请先设置停止日期。";
+    $("#schedule-event-weekly").prepend(note);
+  }
   $("#schedule-event-start-period").value = event.start_period || "";
   $("#schedule-event-end-period").value = event.end_period || "";
   $("#schedule-event-weekdays").querySelectorAll("input").forEach((input) => { input.checked = (event.weekdays || []).includes(Number(input.value)); });
@@ -153,9 +344,19 @@ async function submitScheduleEvent(event) {
   if (frequency === "weekly") {
     const weekdays = [...$("#schedule-event-weekdays").querySelectorAll("input:checked")].map((input) => Number(input.value));
     if (!weekdays.length || !$("#schedule-event-start-date").value) { toast("每周安排需要开始日期和至少一个星期。", "error"); return; }
+    const endDate = $("#schedule-event-end-date").value;
+    const current = appState.editingScheduleEvent;
+    const sameWeekdays = JSON.stringify([...weekdays].sort()) === JSON.stringify([...(current?.weekdays || [])].sort());
+    const ruleChanged = !id || !current || current.frequency !== "weekly" || current.start_date !== $("#schedule-event-start-date").value ||
+      current.end_date !== (endDate || null) || !sameWeekdays;
+    if (ruleChanged && !endDate) { toast("新建或修改每周安排时需要设置停止日期。", "error"); return; }
     payload.start_date = $("#schedule-event-start-date").value;
-    payload.end_date = $("#schedule-event-end-date").value || null;
-    payload.weekdays = weekdays;
+    if (!id || ruleChanged) {
+      payload.end_date = endDate;
+      payload.weekdays = weekdays;
+    }
+    if (!id || ruleChanged) payload.start_date = $("#schedule-event-start-date").value;
+    else { delete payload.frequency; delete payload.start_date; delete payload.end_date; delete payload.weekdays; }
   } else payload.event_date = $("#schedule-event-date").value;
   try {
     const result = await api(id ? `/api/v1/schedule-events/${id}` : "/api/v1/schedule-events", { method: id ? "PATCH" : "POST", body: JSON.stringify(payload) });
@@ -242,10 +443,11 @@ async function commitCourseImport() {
   const body = {
     term_name: $("#term-name").value.trim(),
     week1_monday: $("#term-week1").value,
+    end_date: $("#term-end").value,
     courses: appState.previewCourses,
     replace_existing: $("#replace-term").checked,
   };
-  if (!body.term_name || !body.week1_monday) { toast("请填写学期名称和第 1 周周一。", "error"); return; }
+  if (!body.term_name || !body.week1_monday || !body.end_date) { toast("请填写学期名称、第1周周一和学期结束日期。", "error"); return; }
   if (body.replace_existing && !window.confirm("替换该学期会删除原有课程记录，确认继续？")) return;
   try {
     const result = await api("/api/v1/courses/import/commit", { method: "POST", body: JSON.stringify(body) });
@@ -258,4 +460,23 @@ async function commitCourseImport() {
   } catch (error) { toast(error.message, "error"); }
 }
 
-export { fillPeriodSelects, periodForClock, loadSchedule, toggleCourseAlert, openNewScheduleEvent, resetScheduleEventForm, editScheduleEvent, submitScheduleEvent, deleteScheduleEvent, previewCourseImport, invalidateCoursePreview, commitCourseImport, shiftSchedule };
+function suggestTermEndDate() {
+  const start = $("#term-week1").value;
+  if (!start || $("#term-end").dataset.touched === "1") return;
+  const value = new Date(`${start}T12:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + 125);
+  $("#term-end").value = value.toISOString().slice(0, 10);
+}
+
+function setSelectedTerm(value) {
+  appState.selectedTermId = value || null;
+  if (value) {
+    const term = appState.terms?.find((item) => String(item.id) === String(value));
+    if (term) $("#schedule-date").value = term.week1_monday;
+  } else {
+    $("#schedule-date").value = localToday();
+  }
+  loadSchedule();
+}
+
+export { fillPeriodSelects, periodForClock, loadSchedule, toggleCourseAlert, openNewScheduleEvent, resetScheduleEventForm, editScheduleEvent, submitScheduleEvent, deleteScheduleEvent, previewCourseImport, invalidateCoursePreview, commitCourseImport, shiftSchedule, openCourseEditor, submitCourse, saveTermEndDate, setSelectedTerm, suggestTermEndDate, submitCourseOccurrence, cancelCourseOccurrence };

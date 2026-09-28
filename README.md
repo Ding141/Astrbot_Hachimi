@@ -4,9 +4,10 @@
 
 ## 功能
 
-- 微信自然语言管理 Todo：新增、查询、修改、完成、删除、搜索、分类、优先级、截止日期、每日/每周重复和多个提醒。
-- 支持一层子任务；父任务需等子任务完成后才能完成。
-- 按周或按日查看课程与个人安排；支持 14 节时间表、空闲时段添加安排、冲突提示和逐门课前提醒。
+- 微信自然语言管理 Todo：新增、查询、修改、完成、删除、搜索、分类、重要/紧急四象限、截止日期、每日/每周/每月重复和多个提醒。
+- 支持一层子任务与重复任务子任务模板；父任务需等子任务完成后才能完成。
+- 支持 Todo 日/周/月日历；每月任务按月末自动收敛，并要求新重复规则设置停止日期。
+- 按学期查看课程与个人安排；支持学期日期范围、整学期课程修改、单日调课/停课/恢复、课前提醒批量预览和确认。
 - 导入 `.xlsx` 课表前先预览；兼容标准字段表和星期列合并单元格周历。
 - 统一管理 Todo 提醒、课前提醒、每日早报与周复盘；可从网页或微信进行周复盘和下一周安排。
 - 结构化的中文工具结果；可选天气与 RSS 新闻模块会标出事实来源。
@@ -23,7 +24,7 @@
 - `personal_assistant/api/` 按功能提供版本化 API，`personal_assistant/services/domain.py` 集中共享业务逻辑；入口仍是 `personal_assistant.app:app`。
 - `web/js/` 使用浏览器原生 ES 模块，无 npm 或前端构建步骤。
 - AstrBot 插件只调用业务 API；不直接访问数据库。
-- 数据库 schema 保持 v3；API 路径和已有插件工具名称保持兼容。
+- 数据库 schema 当前为 v4；旧数据库会自动备份后迁移。API 路径保持兼容，已存在的旧版无限重复任务和个人安排继续保留。
 - Compose 只把 Todo 网页绑定到宿主机 `127.0.0.1:8080`；AstrBot WebUI 绑定到 `127.0.0.1:6185`。数据库没有宿主机端口映射。
 
 详细结构见[架构说明](docs/architecture.md)。
@@ -33,6 +34,8 @@
 支持 Ubuntu 22.04 或更新的 Ubuntu 主机。安装 Docker Engine 与 Compose Plugin 时请使用 [Docker 官方 Ubuntu 安装指南](https://docs.docker.com/engine/install/ubuntu/)。本项目不要求安装系统级 Python 依赖；开发依赖仅用于项目内虚拟环境。
 
 从本机连接 DeepSeek、启用插件和个人微信，到迁移数据并在服务器上安全运行的完整步骤，见[本机测试与服务器部署指南](docs/setup-guide.md)。
+
+新增的学期、课程、批量提醒和 Todo 功能用法见[新版功能操作说明](docs/features-and-usage.md)。
 
 ```bash
 git clone <公开仓库地址>
@@ -66,6 +69,8 @@ sudo docker compose down
 5. 主动提醒还需要在 AstrBot 创建仅含 `im` scope 的 OpenAPI Key，填入项目 `.env` 的 `ASTRBOT_API_KEY`，然后重建 API 服务。它与模型提供商 API Key 不同。
 
 操作步骤和人工验收清单见[手动连接与验收](docs/manual-checklist.md)。天气地点和 RSS 地址等个性配置仅写在私有 `.env`；模板不包含个人位置。
+
+已有服务器的安全更新顺序是：先确认 `git status --short`，再运行 `./scripts/backup.sh`，使用 `git pull --ff-only origin main` 拉取代码，运行 `./scripts/up.sh` 构建并启动服务，然后运行 `sudo docker compose restart astrbot` 重新加载插件。检查 `/healthz`、容器日志和网页后再继续使用。完整回滚提示见[部署与数据运维](docs/operations.md#更新与回滚)。
 
 ## 服务器上的私有网页访问
 

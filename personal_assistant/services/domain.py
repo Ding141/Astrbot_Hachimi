@@ -42,6 +42,14 @@ def _set_setting(conn, key: str, value: str) -> None:
 
 def _todo_payload(conn, row) -> dict[str, Any]:
     item = dict(row)
+    today = _now_local().date()
+    due_day = date.fromisoformat(item["due_date"]) if item.get("due_date") else None
+    item["urgent"] = (
+        bool(item["urgent_override"])
+        if item.get("urgent_override") is not None
+        else bool(due_day and item.get("status") == "open" and due_day <= today + timedelta(days=2))
+    )
+    item["important"] = bool(item.get("important", 0))
     reminders = conn.execute(
         "SELECT id,title,remind_at,recipient_umo,status,attempt_count,last_error,created_at,sent_at "
         "FROM reminders WHERE todo_id=? AND status<>'cancelled' ORDER BY remind_at",
@@ -57,13 +65,14 @@ def _todo_payload(conn, row) -> dict[str, Any]:
     item["child_done"] = sum(child["status"] == "completed" for child in children)
     if item.get("series_id"):
         series = conn.execute(
-            "SELECT frequency,weekdays_json,start_date,end_date,reminder_enabled,reminder_times_json FROM todo_series WHERE id=?",
+            "SELECT frequency,month_day,weekdays_json,start_date,end_date,reminder_enabled,reminder_times_json FROM todo_series WHERE id=?",
             (item["series_id"],),
         ).fetchone()
         if series:
             item["recurrence"] = {
                 "series_id": item["series_id"],
-                "frequency": series["frequency"],
+                "frequency": "monthly" if series["month_day"] else series["frequency"],
+                "month_day": series["month_day"],
                 "start_date": series["start_date"],
                 "end_date": series["end_date"],
                 "weekdays": json.loads(series["weekdays_json"]),
@@ -138,6 +147,11 @@ def _series_matches(series, target: date) -> bool:
     last = date.fromisoformat(series["end_date"]) if series["end_date"] else None
     if target < first or (last and target > last):
         return False
+    if series["month_day"]:
+        from calendar import monthrange
+
+        day_of_month = min(int(series["month_day"]), monthrange(target.year, target.month)[1])
+        return target.day == day_of_month
     if series["frequency"] == "daily":
         return True
     return target.isoweekday() in json.loads(series["weekdays_json"])
@@ -165,8 +179,8 @@ def _materialize_todo_series(conn, through: date | None = None) -> int:
                 ).fetchone()
                 if existing is None:
                     cursor = conn.execute(
-                        "INSERT INTO todos(title,notes,category,priority,due_date,due_time,status,created_at,updated_at,series_id,occurrence_date) "
-                        "VALUES(?,?,?,?,?,?,'open',?,?,?,?)",
+                        "INSERT INTO todos(title,notes,category,priority,due_date,due_time,status,created_at,updated_at,series_id,occurrence_date,important,urgent_override) "
+                        "VALUES(?,?,?,?,?,?,'open',?,?,?,?,?,?)",
                         (
                             series["title"],
                             series["notes"],
@@ -178,6 +192,8 @@ def _materialize_todo_series(conn, through: date | None = None) -> int:
                             utc_now(),
                             series["id"],
                             day.isoformat(),
+                            series["important"],
+                            series["urgent_override"],
                         ),
                     )
                     created += 1
@@ -190,12 +206,14 @@ def _materialize_todo_series(conn, through: date | None = None) -> int:
                         and not existing["recurrence_override"]
                     ):
                         conn.execute(
-                            "UPDATE todos SET title=?,notes=?,category=?,priority=?,due_time=?,deleted_at=NULL,updated_at=? WHERE id=?",
+                            "UPDATE todos SET title=?,notes=?,category=?,priority=?,important=?,urgent_override=?,due_time=?,deleted_at=NULL,updated_at=? WHERE id=?",
                             (
                                 series["title"],
                                 series["notes"],
                                 series["category"],
                                 series["priority"],
+                                series["important"],
+                                series["urgent_override"],
                                 series["due_time"],
                                 utc_now(),
                                 todo_id,
@@ -210,7 +228,7 @@ def _materialize_todo_series(conn, through: date | None = None) -> int:
                     and todo["status"] == "open"
                     and not todo["reminder_override"]
                     and series["reminder_enabled"]
-                ):
+                    ):
                     for raw_time in reminder_times:
                         clock = time.fromisoformat(raw_time[:5])
                         when_local = datetime.combine(day, clock, LOCAL_TIMEZONE)
@@ -224,16 +242,52 @@ def _materialize_todo_series(conn, through: date | None = None) -> int:
                             when_local=when_local,
                             todo_id=int(todo["id"]),
                         )
+                if todo and todo["status"] == "open":
+                    templates = conn.execute(
+                        "SELECT id,title FROM todo_series_subtasks WHERE series_id=? AND deleted_at IS NULL ORDER BY position,id",
+                        (series["id"],),
+                    ).fetchall()
+                    for template in templates:
+                        child = conn.execute(
+                            "SELECT id,status,deleted_at,recurrence_override FROM todos WHERE parent_id=? AND series_subtask_id=?",
+                            (todo["id"], template["id"]),
+                        ).fetchone()
+                        if child is None:
+                            conn.execute(
+                                "INSERT INTO todos(title,category,priority,important,urgent_override,due_date,status,created_at,updated_at,parent_id,series_subtask_id) "
+                                "VALUES(?,?,?,?,?,?,'open',?,?,?,?)",
+                                (
+                                    template["title"], series["category"], series["priority"],
+                                    series["important"], series["urgent_override"], day.isoformat(),
+                                    utc_now(), utc_now(), todo["id"], template["id"],
+                                ),
+                            )
+                        elif child["status"] == "open" and not child["recurrence_override"]:
+                            conn.execute(
+                                "UPDATE todos SET title=?,deleted_at=NULL,updated_at=? WHERE id=?",
+                                (template["title"], utc_now(), child["id"]),
+                            )
             day += timedelta(days=1)
     return created
 
 
-def _course_query_for_date(conn, course_date: date) -> dict[str, Any]:
+def _course_query_for_date(
+    conn, course_date: date, term_id: int | None = None, *, apply_exceptions: bool = True
+) -> dict[str, Any]:
     monday = course_date - timedelta(days=course_date.weekday())
-    term = conn.execute(
-        "SELECT * FROM terms WHERE week1_monday<=? ORDER BY week1_monday DESC LIMIT 1",
-        (monday.isoformat(),),
-    ).fetchone()
+    if term_id is not None:
+        term = conn.execute("SELECT * FROM terms WHERE id=?", (term_id,)).fetchone()
+        if term and (
+            course_date < date.fromisoformat(term["week1_monday"])
+            or (term["end_date"] and course_date > date.fromisoformat(term["end_date"]))
+        ):
+            term = None
+    else:
+        term = conn.execute(
+            "SELECT * FROM terms WHERE week1_monday<=? AND (end_date IS NULL OR end_date>=?) "
+            "ORDER BY week1_monday DESC LIMIT 1",
+            (course_date.isoformat(), course_date.isoformat()),
+        ).fetchone()
     if not term:
         return {
             "date": course_date.isoformat(),
@@ -241,6 +295,7 @@ def _course_query_for_date(conn, course_date: date) -> dict[str, Any]:
             "term": None,
             "week": None,
             "courses": [],
+            "cancelled_courses": [],
         }
     week_number = ((monday - date.fromisoformat(term["week1_monday"])).days // 7) + 1
     rows = conn.execute(
@@ -248,6 +303,7 @@ def _course_query_for_date(conn, course_date: date) -> dict[str, Any]:
         (term["id"], course_date.isoweekday()),
     ).fetchall()
     matched = []
+    cancelled = []
     for row in rows:
         weeks = json.loads(row["weeks_json"])
         if weeks and week_number not in weeks:
@@ -256,13 +312,33 @@ def _course_query_for_date(conn, course_date: date) -> dict[str, Any]:
             continue
         if row["week_parity"] == "even" and week_number % 2 != 0:
             continue
-        matched.append(_course_payload(row))
+        course = _course_payload(row)
+        exception = conn.execute(
+            "SELECT * FROM course_exceptions WHERE course_id=? AND occurrence_date=?",
+            (row["id"], course_date.isoformat()),
+        ).fetchone() if apply_exceptions else None
+        if exception:
+            if exception["action"] == "cancelled":
+                course["cancelled"] = True
+                course["exception"] = {"id": exception["id"], "action": exception["action"]}
+                cancelled.append(course)
+                continue
+            for key in ("start_period", "end_period", "start_time", "end_time", "location", "teacher", "notes"):
+                if exception[key] is not None:
+                    course[key] = exception[key]
+            if course.get("start_period") and (exception["start_period"] is not None or exception["end_period"] is not None):
+                course["start_time"], course["end_time"] = period_range(
+                    course["start_period"], course["end_period"]
+                )
+            course["exception"] = {"id": exception["id"], "action": exception["action"]}
+        matched.append(course)
     return {
         "date": course_date.isoformat(),
         "weekday": course_date.isoweekday(),
         "term": term["name"],
         "week": week_number,
         "courses": matched,
+        "cancelled_courses": cancelled,
     }
 
 
@@ -279,6 +355,7 @@ def _event_matches(event, target: date) -> bool:
 def _event_payload(row, target: date | None = None) -> dict[str, Any]:
     item = dict(row)
     item["weekdays"] = json.loads(item.pop("weekdays_json"))
+    item["legacy_unbounded"] = item.get("frequency") == "weekly" and item.get("end_date") is None
     item["date"] = target.isoformat() if target else item.get("event_date") or item["start_date"]
     if item.get("start_period"):
         item["start_time"], item["end_time"] = period_range(

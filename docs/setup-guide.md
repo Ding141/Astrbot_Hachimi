@@ -214,12 +214,23 @@ docker compose logs --tail=100 assistant-api astrbot
 docker compose down
 ```
 
-服务器升级前先备份数据库，再在仓库目录获取代码更新并重建服务：
+服务器升级前先备份数据库，再在仓库目录获取代码更新并重建服务。先确认当前目录是项目仓库且没有未保存的改动：
 
 ```bash
-git pull
+git status --short
+git rev-parse --short HEAD
+./scripts/backup.sh
+git pull --ff-only origin main
 ./scripts/up.sh
+sudo docker compose restart astrbot
+sudo docker compose ps
+curl -fsS http://127.0.0.1:8080/healthz
+sudo docker compose logs --tail=100 assistant-api astrbot
 ```
+
+`git pull --ff-only` 如果因本地修改或分叉而停止，不要用 `reset --hard` 清除改动；先检查并保留这些文件。更新前的提交号和 `backups/` 中的 SQLite 文件用于回滚。数据库结构升级会自动创建一致性快照。若要回滚，先另存故障后的数据库和日志，停止 Compose，再同时切回旧代码并恢复更新前数据库；不要把新结构的数据库直接交给旧版本运行。具体回滚步骤见[部署与数据运维](operations.md#更新与回滚)。
+
+Todo 日历、四象限、重复任务停止日期、学期管理和课程操作的使用步骤见[功能操作手册](features-and-usage.md)。
 
 AstrBot 镜像默认固定版本；升级 AstrBot 前先检查兼容性，再显式修改服务器 `.env` 中的 `ASTRBOT_IMAGE`。不要运行 `docker system prune`、清空共享 volume 或删除 `data/`。更完整的备份恢复说明见[部署与数据运维](operations.md)，安全边界见[安全与隐私](security.md)。
 

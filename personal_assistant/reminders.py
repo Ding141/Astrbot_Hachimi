@@ -65,11 +65,11 @@ def _enqueue(
         "VALUES(?,?,?,?,?,'pending',?,?,?) ON CONFLICT(source_key) WHERE source_key IS NOT NULL DO UPDATE SET "
         "title=excluded.title,body=excluded.body,remind_at=excluded.remind_at,"
         "status=CASE WHEN reminders.status='cancelled' AND reminders.last_error IN "
-        "('series_updated','schedule_disabled','course_disabled','course_updated') THEN 'pending' ELSE reminders.status END,"
+        "('series_updated','schedule_disabled','course_disabled','course_updated','course_exception','term_ended') THEN 'pending' ELSE reminders.status END,"
         "last_error=CASE WHEN reminders.status='cancelled' AND reminders.last_error IN "
-        "('series_updated','schedule_disabled','course_disabled','course_updated') THEN '' ELSE reminders.last_error END "
+        "('series_updated','schedule_disabled','course_disabled','course_updated','course_exception','term_ended') THEN '' ELSE reminders.last_error END "
         "WHERE reminders.status='pending' OR (reminders.status='cancelled' AND reminders.last_error IN "
-        "('series_updated','schedule_disabled','course_disabled','course_updated'))",
+        "('series_updated','schedule_disabled','course_disabled','course_updated','course_exception','term_ended'))",
         (
             todo_id,
             title,
@@ -131,19 +131,20 @@ def _materialize_periodic_jobs() -> None:
         # Create course reminders for the next two weeks; unique keys prevent duplicates after restarts.
         for offset in range(15):
             target = today + timedelta(days=offset)
-            monday = target - timedelta(days=target.weekday())
             term = conn.execute(
-                "SELECT * FROM terms WHERE week1_monday<=? ORDER BY week1_monday DESC LIMIT 1",
-                (monday.isoformat(),),
+                "SELECT * FROM terms WHERE week1_monday<=? AND (end_date IS NULL OR end_date>=?) ORDER BY week1_monday DESC LIMIT 1",
+                (target.isoformat(), target.isoformat()),
             ).fetchone()
             if not term:
                 continue
+            monday = target - timedelta(days=target.weekday())
             week_number = ((monday - date.fromisoformat(term["week1_monday"])).days // 7) + 1
             rows = conn.execute(
                 "SELECT * FROM courses WHERE term_id=? AND weekday=? AND reminder_enabled=1",
                 (term["id"], target.isoweekday()),
             ).fetchall()
-            for course in rows:
+            for course_row in rows:
+                course = dict(course_row)
                 weeks = json.loads(course["weeks_json"])
                 if weeks and week_number not in weeks:
                     continue
@@ -151,6 +152,20 @@ def _materialize_periodic_jobs() -> None:
                     continue
                 if course["week_parity"] == "even" and week_number % 2 != 0:
                     continue
+                exception = conn.execute(
+                    "SELECT * FROM course_exceptions WHERE course_id=? AND occurrence_date=?",
+                    (course["id"], target.isoformat()),
+                ).fetchone()
+                if exception:
+                    if exception["action"] == "cancelled":
+                        continue
+                    for key in ("start_period", "end_period", "start_time", "end_time", "location", "teacher", "notes"):
+                        if exception[key] is not None:
+                            course[key] = exception[key]
+                    if exception["start_period"] is not None or exception["end_period"] is not None:
+                        course["start_time"], course["end_time"] = period_range(
+                            course["start_period"], course["end_period"]
+                        )
                 start_time = course["start_time"]
                 end_time = course["end_time"]
                 if not start_time or not end_time:

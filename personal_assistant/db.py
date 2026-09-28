@@ -8,11 +8,11 @@ from typing import Any, Iterator
 
 from personal_assistant.config import BACKUP_DIR, DATABASE_PATH
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
 def connect() -> sqlite3.Connection:
@@ -279,6 +279,77 @@ def initialize_database() -> None:
                 "ALTER TABLE todos ADD COLUMN reminder_override INTEGER NOT NULL DEFAULT 0 CHECK(reminder_override IN (0,1))"
             )
             conn.execute("PRAGMA user_version = 3")
+            current = 3
+        if current < 4:
+            conn.execute("ALTER TABLE terms ADD COLUMN end_date TEXT")
+            conn.execute(
+                "ALTER TABLE terms ADD COLUMN end_date_inferred INTEGER NOT NULL DEFAULT 0"
+            )
+            conn.execute(
+                "UPDATE terms SET end_date=date(week1_monday, '+125 days'),end_date_inferred=1 "
+                "WHERE end_date IS NULL"
+            )
+            conn.execute("ALTER TABLE courses ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
+            conn.execute("UPDATE courses SET updated_at=created_at WHERE updated_at=''")
+            conn.execute(
+                """CREATE TABLE course_exceptions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+                    occurrence_date TEXT NOT NULL,
+                    action TEXT NOT NULL CHECK(action IN ('cancelled','override')),
+                    start_period INTEGER,
+                    end_period INTEGER,
+                    start_time TEXT,
+                    end_time TEXT,
+                    location TEXT,
+                    teacher TEXT,
+                    notes TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(course_id, occurrence_date)
+                )"""
+            )
+            conn.execute("ALTER TABLE todos ADD COLUMN important INTEGER NOT NULL DEFAULT 0")
+            conn.execute("ALTER TABLE todos ADD COLUMN urgent_override INTEGER CHECK(urgent_override IN (0,1))")
+            conn.execute("UPDATE todos SET important=CASE WHEN priority>=3 THEN 1 ELSE 0 END")
+            conn.execute("ALTER TABLE todo_series ADD COLUMN important INTEGER NOT NULL DEFAULT 0")
+            conn.execute("ALTER TABLE todo_series ADD COLUMN urgent_override INTEGER CHECK(urgent_override IN (0,1))")
+            conn.execute("ALTER TABLE todo_series ADD COLUMN month_day INTEGER CHECK(month_day BETWEEN 1 AND 31)")
+            conn.execute("UPDATE todo_series SET important=CASE WHEN priority>=3 THEN 1 ELSE 0 END")
+            conn.execute(
+                """CREATE TABLE todo_series_subtasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    series_id INTEGER NOT NULL REFERENCES todo_series(id) ON DELETE CASCADE,
+                    title TEXT NOT NULL,
+                    position INTEGER NOT NULL DEFAULT 0,
+                    deleted_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )"""
+            )
+            conn.execute(
+                "ALTER TABLE todos ADD COLUMN series_subtask_id INTEGER REFERENCES todo_series_subtasks(id) ON DELETE SET NULL"
+            )
+            conn.execute(
+                "CREATE UNIQUE INDEX idx_todo_series_subtask_occurrence "
+                "ON todos(parent_id,series_subtask_id) WHERE series_subtask_id IS NOT NULL"
+            )
+            conn.execute(
+                """CREATE TABLE course_reminder_previews (
+                    umo TEXT PRIMARY KEY,
+                    preview_id TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    course_ids_json TEXT NOT NULL,
+                    expected_versions_json TEXT NOT NULL,
+                    criteria_json TEXT NOT NULL,
+                    enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+                    lead_minutes INTEGER NOT NULL CHECK(lead_minutes BETWEEN 0 AND 180),
+                    term_id INTEGER NOT NULL REFERENCES terms(id) ON DELETE CASCADE,
+                    expires_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )"""
+            )
+            conn.execute("PRAGMA user_version = 4")
         conn.execute(
             "UPDATE reminders SET status='uncertain', last_error='Service restarted while delivery was in progress; check before retrying.' WHERE status='sending'"
         )

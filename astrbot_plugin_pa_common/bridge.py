@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import os
+import sys
 from datetime import date, datetime
 from pathlib import Path
-import sys
 from zoneinfo import ZoneInfo
 
 PLUGIN_ROOT = str(Path(__file__).resolve().parent.parent)
@@ -74,7 +74,18 @@ def _todo_line(item: dict) -> str:
         bits.append("已完成")
     recurrence = item.get("recurrence")
     if recurrence:
-        bits.append("每日重复" if recurrence.get("frequency") == "daily" else "每周重复")
+        if recurrence.get("frequency") == "daily":
+            bits.append("每日重复")
+        elif recurrence.get("frequency") == "monthly":
+            bits.append(f"每月{recurrence.get('month_day')}日重复")
+        else:
+            bits.append("每周重复")
+    if item.get("important") and item.get("urgent"):
+        bits.append("重要且紧急")
+    elif item.get("important"):
+        bits.append("重要")
+    elif item.get("urgent"):
+        bits.append("紧急")
     return " · ".join(bits)
 
 
@@ -85,7 +96,7 @@ def render_todo(operation: str, result: dict) -> str:
         items = result["items"]
         if not items:
             return "目前没有符合条件的待办任务。"
-        lines = [f"找到 {len(items)} 项待办："]
+        lines = [f"这份清单里有 {len(items)} 项待办，来看看吧 📝"]
         for item in items[:20]:
             lines.append(f"• {_todo_line(item)}")
             for child in item.get("children", []):
@@ -98,26 +109,40 @@ def render_todo(operation: str, result: dict) -> str:
         return "\n".join(lines)
     if "instances" in result:
         days = {1: "周一", 2: "周二", 3: "周三", 4: "周四", 5: "周五", 6: "周六", 7: "周日"}
-        repeat = "每天" if result.get("frequency") == "daily" else "每周" + "、".join(days.get(day, "") for day in result.get("weekdays", []))
+        if result.get("frequency") == "daily":
+            repeat = "每天"
+        elif result.get("frequency") == "monthly":
+            repeat = f"每月 {result.get('month_day')} 日"
+        else:
+            repeat = "每周" + "、".join(days.get(day, "") for day in result.get("weekdays", []))
         instances = result.get("instances", [])
         following = "、".join(_date_label(item.get("due_date")) for item in instances[:4])
         if operation == "series":
-            return f"重复任务系列 #{result.get('id')}「{result.get('title', '')}」：{repeat}执行；近期日期：{following or '暂无'}。"
-        return f"已建立重复任务系列 #{result.get('id')}「{result.get('title', '')}」，{repeat}执行。" + (f"\n近期日期：{following}" if following else "")
-    if result.get("id") and result.get("frequency") in {"daily", "weekly"}:
+            end = f"，持续到 {result.get('end_date')}" if result.get("end_date") else "，⚠ 旧任务还没有停止日期"
+            return f"重复任务系列 #{result.get('id')}「{result.get('title', '')}」：{repeat}执行{end}；近期日期：{following or '暂无'}。"
+        end = f"，到 {result.get('end_date')} 结束" if result.get("end_date") else ""
+        return f"已安排好重复任务 #{result.get('id')}「{result.get('title', '')}」，{repeat}执行{end}。" + (f"\n近期日期：{following}" if following else "")
+    if result.get("id") and result.get("frequency") in {"daily", "weekly", "monthly"}:
         days = {1: "周一", 2: "周二", 3: "周三", 4: "周四", 5: "周五", 6: "周六", 7: "周日"}
-        repeat = "每天" if result["frequency"] == "daily" else "每周" + "、".join(days.get(day, "") for day in result.get("weekdays", []))
+        if result["frequency"] == "daily":
+            repeat = "每天"
+        elif result["frequency"] == "monthly":
+            repeat = f"每月 {result.get('month_day')} 日"
+        else:
+            repeat = "每周" + "、".join(days.get(day, "") for day in result.get("weekdays", []))
         reminders = "、".join(result.get("reminder_times", [])) or "未设置"
-        return f"已更新重复任务系列 #{result['id']}「{result.get('title', '')}」：{repeat}；提醒时刻：{reminders}。"
+        ending = f"；停止日期 {result.get('end_date')}" if result.get("end_date") else "；⚠ 这是一组旧的无限重复任务"
+        return f"重复任务系列 #{result['id']}「{result.get('title', '')}」已更新：{repeat}{ending}；提醒时刻：{reminders}。✨"
     if result.get("deleted"):
         if result.get("future_occurrences_cancelled"):
             return "已取消这个重复任务系列的未来周期，已完成历史保留。"
         scope = "整个重复系列的未来任务" if result.get("scope") == "series" else "这项任务"
         return f"已删除{scope}，历史记录仍保留。"
     if result.get("completed_at") or operation == "complete":
-        return f"已完成任务「{result.get('title', '')}」。"
+        return f"这项任务收工啦：「{result.get('title', '')}」✅"
     if result.get("id"):
-        return f"已{ {'create': '添加', 'update': '更新'}.get(operation, '保存') }待办：{_todo_line(result)}。"
+        verb = {"create": "记下啦", "update": "改好啦"}.get(operation, "保存好啦")
+        return f"{verb} ✍️ {_todo_line(result)}。"
     if "deleted_count" in result:
         return f"已删除 {result['deleted_count']} 项任务。"
     return "Todo 操作已完成。"
@@ -135,7 +160,7 @@ def render_courses(result: dict) -> str:
         if result.get("term"):
             header += f"（{result['term']}）"
         courses = result.get("courses", [])
-        lines = [f"{header}，今天一共有 {len(courses)} 门课："]
+        lines = [f"{header}，安排了 {len(courses)} 门课，一起来看看 🗓️："]
         for course in courses:
             lines.append("\n" + _course_line(course))
         for event in result.get("events", []):
@@ -144,7 +169,7 @@ def render_courses(result: dict) -> str:
     courses = result.get("courses", [])
     if not courses:
         return f"没有找到与“{result.get('query', '')}”匹配的课程。"
-    lines = [f"找到 {len(courses)} 条课程记录："]
+    lines = [f"找到 {len(courses)} 条课程记录，给你列出来啦 📚："]
     weekdays = {1: "周一", 2: "周二", 3: "周三", 4: "周四", 5: "周五", 6: "周六", 7: "周日"}
     for course in courses[:20]:
         period = f"第{course['start_period']}–{course.get('end_period') or course['start_period']}节" if course.get("start_period") else ""
