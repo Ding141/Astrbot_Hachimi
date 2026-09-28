@@ -58,11 +58,11 @@ def list_todos(
         params.extend([needle, needle, needle])
     today = _now_local().date().isoformat()
     if due == "today":
-        clauses.append("COALESCE(due_date,start_date)=?")
-        params.append(today)
+        clauses.append("COALESCE(start_date,due_date)<=? AND COALESCE(due_date,start_date)>=?")
+        params.extend([today, today])
     elif due == "upcoming":
         last_day = (_now_local().date() + timedelta(days=7)).isoformat()
-        clauses.append("COALESCE(due_date,start_date)>? AND COALESCE(due_date,start_date)<=?")
+        clauses.append("COALESCE(due_date,start_date)>? AND COALESCE(start_date,due_date)<=?")
         params.extend([today, last_day])
     elif due == "overdue":
         current_time = _now_local().strftime("%H:%M")
@@ -98,9 +98,9 @@ def todo_calendar(
     with connection() as conn:
         _materialize_todo_series(conn, to_date)
         rows = conn.execute(
-            "SELECT * FROM todos WHERE deleted_at IS NULL AND COALESCE(start_date,due_date)>=? "
-            "AND COALESCE(start_date,due_date)<=? ORDER BY COALESCE(start_date,due_date),start_time,due_date,due_time,important DESC,priority DESC,id",
-            (from_date.isoformat(), to_date.isoformat()),
+            "SELECT * FROM todos WHERE deleted_at IS NULL AND COALESCE(start_date,due_date)<=? "
+            "AND COALESCE(due_date,start_date)>=? ORDER BY COALESCE(start_date,due_date),start_time,due_date,due_time,important DESC,priority DESC,id",
+            (to_date.isoformat(), from_date.isoformat()),
         ).fetchall()
         undated = conn.execute(
             "SELECT * FROM todos WHERE deleted_at IS NULL AND due_date IS NULL AND start_date IS NULL ORDER BY important DESC,priority DESC,id DESC LIMIT 200",

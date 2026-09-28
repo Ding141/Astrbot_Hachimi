@@ -24,6 +24,7 @@ async function loadTodos() {
   $("#todo-empty").hidden = inCalendar || result.items.length > 0;
   $("#todo-calendar").hidden = !inCalendar;
   $("#todo-undated").hidden = !inCalendar;
+  if (!inCalendar) clearTodoSelection();
   document.querySelectorAll("[data-todo-view]").forEach((button) => button.classList.toggle("active", button.dataset.todoView === (appState.todoView || "list")));
   const rows = $("#todo-rows");
   rows.innerHTML = result.items.map((item) => {
@@ -107,9 +108,10 @@ function filterCalendarItems(items) {
   return items.filter((item) => {
     if (status !== "all" && item.status !== status) return false;
     if (q && !`${item.title} ${item.notes} ${item.category}`.toLocaleLowerCase().includes(q)) return false;
-    const taskDate = item.end_date || item.start_date;
-    if (due === "today" && taskDate !== today) return false;
-    if (due === "upcoming" && !(taskDate > today && taskDate <= upcomingIso)) return false;
+    const taskStart = item.start_date || item.end_date;
+    const taskEnd = item.end_date || item.start_date;
+    if (due === "today" && !(taskStart && taskEnd && taskStart <= today && taskEnd >= today)) return false;
+    if (due === "upcoming" && !(taskEnd > today && taskStart <= upcomingIso)) return false;
     if (due === "overdue") {
       const currentTime = new Date().toLocaleTimeString("en-GB", {
         timeZone: "Asia/Shanghai",
@@ -117,12 +119,13 @@ function filterCalendarItems(items) {
         minute: "2-digit",
         hour12: false,
       });
+      const deadlineDate = item.end_date || item.start_date;
       const deadlineTime = item.end_date ? item.end_time : item.start_time;
       const overdue = item.status === "open"
-        && taskDate
+        && deadlineDate
         && (
-          taskDate < today
-          || (taskDate === today && deadlineTime && deadlineTime < currentTime)
+          deadlineDate < today
+          || (deadlineDate === today && deadlineTime && deadlineTime < currentTime)
         );
       if (!overdue) return false;
     }
@@ -130,14 +133,73 @@ function filterCalendarItems(items) {
   });
 }
 
-function renderCalendarCard(item) {
-  const quadrant = quadrantLabel(item);
-  return `<article class="todo-calendar-card ${item.status === "completed" ? "completed" : ""} ${categoryCss(item.category)}">
-    <button class="calendar-task-title" type="button" data-edit-todo="${item.id}">${escapeHtml(item.title)}</button>
-    <div class="calendar-task-meta">${item.due_time ? `<span>${escapeHtml(item.due_time)}</span>` : ""}${item.category ? `<span>${escapeHtml(item.category)}</span>` : ""}<span class="quad-pill ${quadrant.css}">${quadrant.text}</span></div>
-    <div class="calendar-task-meta">${escapeHtml(taskTimeLabel(item))}</div>
-    <div class="calendar-task-actions">${item.status === "open" ? `<button type="button" data-complete-todo="${item.id}">完成</button>` : ""}<button type="button" data-delete-todo="${item.id}">删除</button></div>
+function rangeForTodo(item) {
+  return { start: item.start_date || item.end_date, end: item.end_date || item.start_date };
+}
+
+function calendarRangeLabel(item, day) {
+  const { start, end } = rangeForTodo(item);
+  if (!start || !end) return "未安排时间";
+  if (start === end) {
+    if (item.start_time && item.end_time) return `${item.start_time}–${item.end_time}`;
+    return item.start_time || item.end_time || "当天";
+  }
+  if (day === start) return `开始${item.start_time ? ` · ${item.start_time}` : ""}`;
+  if (day === end) return `结束${item.end_time ? ` · ${item.end_time}` : ""}`;
+  return "持续中";
+}
+
+function renderCalendarCard(item, day) {
+  const { start, end } = rangeForTodo(item);
+  const rangeState = start === end ? "range-single" : day === start ? "range-start" : day === end ? "range-end" : "range-middle";
+  const selected = Number(appState.selectedTodo) === Number(item.id);
+  const ariaLabel = `${item.title}，${taskTimeLabel(item)}`;
+  return `<article class="todo-calendar-card ${item.status === "completed" ? "completed" : ""} ${categoryCss(item.category)} ${rangeState} ${selected ? "is-selected" : ""}" tabindex="0" role="button" aria-pressed="${selected}" aria-label="查看待办 ${escapeHtml(ariaLabel)}" data-todo-id="${item.id}" data-todo-date="${day || ""}">
+    <strong class="calendar-task-title">${escapeHtml(item.title)}</strong>
+    <span class="calendar-range-label">${escapeHtml(calendarRangeLabel(item, day))}</span>
   </article>`;
+}
+
+function selectTodo(todoId) {
+  appState.selectedTodo = todoId;
+  document.querySelectorAll(".todo-calendar-card").forEach((card) => {
+    const selected = Number(card.dataset.todoId) === Number(todoId);
+    card.classList.toggle("is-selected", selected);
+    card.setAttribute("aria-pressed", String(selected));
+  });
+  renderSelectedTodoDetails();
+}
+
+function clearTodoSelection() {
+  appState.selectedTodo = null;
+  const panel = $("#todo-details");
+  const workspace = $("#todo-workspace");
+  if (panel) { panel.hidden = true; panel.innerHTML = ""; }
+  workspace?.classList.remove("has-selected-todo");
+  document.querySelectorAll(".todo-calendar-card.is-selected").forEach((card) => {
+    card.classList.remove("is-selected");
+    card.setAttribute("aria-pressed", "false");
+  });
+}
+
+function renderSelectedTodoDetails() {
+  const panel = $("#todo-details");
+  const workspace = $("#todo-workspace");
+  const item = appState.todos.find((entry) => Number(entry.id) === Number(appState.selectedTodo));
+  if (!item) { clearTodoSelection(); return; }
+  const start = item.start_date || item.end_date;
+  const end = item.end_date || item.start_date;
+  const reminders = (item.reminders || []).filter((reminder) => reminder.status !== "cancelled");
+  const recurrence = item.recurrence ? `${recurrenceLabel(item.recurrence)} · ${item.recurrence.start_date} 至 ${item.recurrence.end_date || "未设结束"}` : "不重复";
+  panel.hidden = false;
+  workspace.classList.add("has-selected-todo");
+  panel.innerHTML = `<header class="selected-todo-heading"><div><span class="eyebrow">待办详情</span><h3>${escapeHtml(item.title)}</h3></div><button class="selected-todo-close" type="button" aria-label="关闭待办详情">×</button></header>
+    <dl class="selected-todo-facts"><div><dt>时间范围</dt><dd>${escapeHtml(start && end ? `${localDate(start, item.start_time)} – ${localDate(end, item.end_time)}` : taskTimeLabel(item))}</dd></div><div><dt>状态</dt><dd>${item.status === "completed" ? "已完成" : "未完成"}</dd></div><div><dt>重复</dt><dd>${escapeHtml(recurrence)}</dd></div><div><dt>分类</dt><dd>${escapeHtml(item.category || "未分类")}</dd></div><div><dt>优先级</dt><dd>${escapeHtml(quadrantLabel(item).text)}</dd></div><div><dt>提醒</dt><dd>${reminders.length ? reminders.map((reminder) => escapeHtml(localReminderInput(reminder.remind_at))).join("<br>") : "未设置提醒"}</dd></div>${item.notes ? `<div class="selected-todo-notes"><dt>备注</dt><dd>${escapeHtml(item.notes)}</dd></div>` : ""}</dl>
+    <div class="selected-todo-actions"><button class="secondary selected-todo-edit" type="button">编辑待办</button>${item.status === "open" ? `<button class="secondary selected-todo-complete" type="button">标记完成</button>` : ""}<button class="secondary danger-button selected-todo-delete" type="button">删除待办</button></div>`;
+  panel.querySelector(".selected-todo-close").addEventListener("click", clearTodoSelection);
+  panel.querySelector(".selected-todo-edit").addEventListener("click", () => editTodo(item.id, appState.todos));
+  panel.querySelector(".selected-todo-complete")?.addEventListener("click", () => completeTodo(item.id));
+  panel.querySelector(".selected-todo-delete").addEventListener("click", () => removeTodo(item.id));
 }
 
 async function loadTodoCalendar() {
@@ -148,11 +210,20 @@ async function loadTodoCalendar() {
   appState.todos = [...result.undated, ...result.items];
   const groups = new Map();
   for (const item of items) {
-    const groupDate = item.start_date || item.end_date;
-    if (!groupDate) continue;
-    const group = groups.get(groupDate) || [];
-    group.push(item);
-    groups.set(groupDate, group);
+    const { start, end } = rangeForTodo(item);
+    if (!start || !end) continue;
+    const firstDay = start < first ? first : start;
+    const lastDay = end > last ? last : end;
+    if (lastDay < firstDay) continue;
+    const cursor = dateFromIso(firstDay);
+    const stop = dateFromIso(lastDay);
+    while (cursor <= stop) {
+      const groupDate = localIso(cursor);
+      const group = groups.get(groupDate) || [];
+      group.push(item);
+      groups.set(groupDate, group);
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
   }
   const grid = $("#todo-calendar");
   grid.className = `todo-calendar ${appState.todoView}-view`;
@@ -164,14 +235,21 @@ async function loadTodoCalendar() {
     const outside = appState.todoView === "month" && day.getMonth() !== anchor.getMonth();
     const entries = groups.get(iso) || [];
     const displayDate = day.toLocaleDateString("zh-CN", { weekday: "short", month: "numeric", day: "numeric", timeZone: "Asia/Shanghai" });
-    cells.push(`<section class="todo-calendar-day ${iso === localToday() ? "is-today" : ""} ${outside ? "outside-month" : ""}"><div class="todo-calendar-date"><button type="button" data-view-date="${iso}">${displayDate}</button><span>${entries.length ? entries.length + "项" : ""}</span></div><div class="todo-calendar-items">${entries.map(renderCalendarCard).join("") || `<span class="subtle">${appState.todoView === "day" ? "今天还没有任务" : ""}</span>`}</div></section>`);
+    cells.push(`<section class="todo-calendar-day ${iso === localToday() ? "is-today" : ""} ${outside ? "outside-month" : ""}"><div class="todo-calendar-date"><button type="button" data-view-date="${iso}">${displayDate}</button><span>${entries.length ? entries.length + "项" : ""}</span></div><div class="todo-calendar-items">${entries.map((item) => renderCalendarCard(item, iso)).join("") || `<span class="subtle">${appState.todoView === "day" ? "今天还没有任务" : ""}</span>`}</div></section>`);
   }
   grid.innerHTML = cells.join("");
   const undated = filterCalendarItems(result.undated);
-  $("#todo-undated").innerHTML = undated.length ? `<strong>未设置日期 · ${undated.length} 项</strong><div class="todo-calendar-items">${undated.slice(0, 20).map(renderCalendarCard).join("")}</div>` : "";
-  grid.querySelectorAll("[data-edit-todo]").forEach((button) => button.addEventListener("click", () => editTodo(Number(button.dataset.editTodo), appState.todos)));
-  grid.querySelectorAll("[data-complete-todo]").forEach((button) => button.addEventListener("click", () => completeTodo(button.dataset.completeTodo)));
-  grid.querySelectorAll("[data-delete-todo]").forEach((button) => button.addEventListener("click", () => removeTodo(button.dataset.deleteTodo)));
+  appState.todos = [...items, ...undated];
+  $("#todo-undated").innerHTML = undated.length ? `<strong>未设置日期 · ${undated.length} 项</strong><div class="todo-calendar-items">${undated.slice(0, 20).map((item) => renderCalendarCard(item, "")).join("")}</div>` : "";
+  if (appState.selectedTodo && !appState.todos.some((item) => Number(item.id) === Number(appState.selectedTodo))) clearTodoSelection();
+  document.querySelectorAll(".todo-calendar-card").forEach((card) => {
+    const select = () => selectTodo(Number(card.dataset.todoId));
+    card.addEventListener("click", select);
+    card.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(); }
+    });
+  });
+  renderSelectedTodoDetails();
   grid.querySelectorAll("[data-view-date]").forEach((button) => button.addEventListener("click", () => { appState.todoView = "day"; $("#todo-calendar-date").value = button.dataset.viewDate; loadTodos(); }));
 }
 

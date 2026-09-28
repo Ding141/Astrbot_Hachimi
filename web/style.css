@@ -66,6 +66,21 @@ input::placeholder, textarea::placeholder { color: #b4b5c1; }
 .todo-calendar.day-view { grid-template-columns: minmax(0, 1fr); }
 .todo-calendar.week-view { grid-template-columns: repeat(7, minmax(145px, 1fr)); }
 .todo-calendar.month-view { grid-template-columns: repeat(7, minmax(115px, 1fr)); }
+.todo-workspace { min-width: 0; }
+.todo-workspace.has-selected-todo { display: grid; grid-template-columns: minmax(220px, 260px) minmax(0, 1fr); align-items: start; gap: 13px; }
+.todo-workspace.has-selected-todo .todo-calendar { min-width: 0; }
+.todo-details { position: sticky; top: 14px; padding: 16px; border: 1px solid #e7e4f5; border-radius: 13px; background: linear-gradient(155deg, #fbfaff, #fff); box-shadow: 0 8px 24px #302b4b0b; }
+.selected-todo-heading { display: flex; justify-content: space-between; align-items: start; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid #eceaf4; }
+.selected-todo-heading .eyebrow { display: block; margin-bottom: 4px; color: #8e88b7; font-size: 10px; }
+.selected-todo-heading h3 { margin: 0; color: #393750; font-size: 16px; line-height: 1.4; overflow-wrap: anywhere; }
+.selected-todo-close { width: 29px; height: 29px; border: 1px solid #e5e3ef; border-radius: 9px; background: #fff; color: #77758b; font-size: 19px; line-height: 1; }
+.selected-todo-facts { display: grid; gap: 10px; margin: 14px 0; }
+.selected-todo-facts div { display: grid; grid-template-columns: 58px 1fr; gap: 8px; }
+.selected-todo-facts dt { color: #8e8fa0; font-size: 11px; }
+.selected-todo-facts dd { margin: 0; color: #4a4a61; font-size: 12px; overflow-wrap: anywhere; }
+.selected-todo-facts .selected-todo-notes { grid-template-columns: 1fr; gap: 3px; }
+.selected-todo-actions { display: grid; gap: 7px; }
+.selected-todo-actions button { justify-content: center; padding: 9px 10px; font-size: 11px; }
 .todo-calendar-day { min-height: 165px; padding: 9px; border: 1px solid #eeeef5; border-radius: 11px; background: #fff; }
 .todo-calendar.day-view .todo-calendar-day { min-height: 290px; }
 .todo-calendar.month-view .todo-calendar-day { min-height: 118px; }
@@ -74,13 +89,15 @@ input::placeholder, textarea::placeholder { color: #b4b5c1; }
 .todo-calendar-date { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 10px; font-weight: 700; color: #686b83; }
 .todo-calendar-date button { padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
 .todo-calendar-items { display: grid; gap: 5px; }
-.todo-calendar-card { border-left: 3px solid #8c84e8; border-radius: 6px; background: #f8f7ff; padding: 6px 7px; min-width: 0; }
+.todo-calendar-card { display: grid; gap: 2px; border-left: 3px solid #8c84e8; border-radius: 6px; background: #f8f7ff; padding: 6px 7px; min-width: 0; cursor: pointer; transition: border-color .15s, box-shadow .15s, background .15s; }
+.todo-calendar-card.range-start { border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
+.todo-calendar-card.range-middle { border-radius: 3px; }
+.todo-calendar-card.range-end { border-top-left-radius: 3px; border-bottom-left-radius: 3px; }
+.todo-calendar-card.is-selected { border-color: #7168d7; box-shadow: 0 0 0 2px #8d86e333; background: #f0eeff; }
 .todo-calendar-card.completed { opacity: .6; }
-.todo-calendar-card .calendar-task-title { display: block; padding: 0; border: 0; background: none; color: #383a51; text-align: left; font-size: 10px; font-weight: 650; overflow-wrap: anywhere; cursor: pointer; }
+.todo-calendar-card .calendar-task-title { display: block; color: #383a51; font-size: 10px; font-weight: 650; line-height: 1.3; overflow-wrap: anywhere; }
 .todo-calendar-card.completed .calendar-task-title { text-decoration: line-through; }
-.calendar-task-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; color: #84869a; font-size: 8px; }
-.todo-calendar-card .calendar-task-actions { display: flex; gap: 4px; margin-top: 5px; }
-.calendar-task-actions button { padding: 2px 5px; border: 1px solid #e8e6f6; border-radius: 5px; background: white; color: #77738f; font-size: 8px; }
+.calendar-range-label { color: #84869a; font-size: 8px; line-height: 1.25; }
 .undated-todos { margin: 12px 0; padding: 10px; border-radius: 9px; background: #fbfaff; color: #77798d; font-size: 10px; }
 .undated-todos strong { display: block; margin-bottom: 6px; }
 .quad-pill { display: inline-flex; border-radius: 20px; padding: 3px 6px; font-size: 8px; white-space: nowrap; }
@@ -310,6 +327,8 @@ body.drawer-open { overflow: hidden; }
   .timetable-panel > .panel-heading { align-items: start; }
   .schedule-workspace.has-selected-course { grid-template-columns: minmax(0, 1fr); }
   .schedule-course-details { position: static; }
+  .todo-workspace.has-selected-todo { grid-template-columns: minmax(0, 1fr); }
+  .todo-details { position: static; }
   .schedule-controls { justify-content: start; }
   .schedule-grid:not(.day-mode) .timetable-head, .schedule-grid:not(.day-mode) .timetable-body { min-width: 930px; grid-template-columns: var(--period-axis) repeat(var(--day-count), minmax(122px, 1fr)); }
   .period-axis, .timetable-day-track { grid-template-rows: repeat(14, 62px); }

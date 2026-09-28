@@ -66,7 +66,10 @@
               <div class="calendar-view-switch" role="group" aria-label="任务视图"><button class="secondary active" data-todo-view="list" type="button">清单</button><button class="secondary" data-todo-view="day" type="button">日</button><button class="secondary" data-todo-view="week" type="button">周</button><button class="secondary" data-todo-view="month" type="button">月</button></div>
               <div class="calendar-navigation"><button id="todo-prev" class="secondary" type="button" aria-label="上一段">‹</button><button id="todo-today" class="secondary" type="button">今天</button><button id="todo-next" class="secondary" type="button" aria-label="下一段">›</button><input id="todo-calendar-date" type="date" aria-label="选择日期"></div>
             </div>
-            <div id="todo-calendar" class="todo-calendar" hidden></div>
+            <div id="todo-workspace" class="todo-workspace">
+              <aside id="todo-details" class="todo-details" hidden></aside>
+              <div id="todo-calendar" class="todo-calendar" hidden></div>
+            </div>
             <div id="todo-undated" class="undated-todos" hidden></div>
             <div class="table-scroll"><table><thead><tr><th><input id="todo-select-visible" type="checkbox" aria-label="选择当前显示的任务"></th><th>任务</th><th>时间</th><th>分类</th><th>优先级</th><th>提醒</th><th></th></tr></thead><tbody id="todo-rows"></tbody></table></div>
             <div id="todo-empty" class="empty-state" hidden><span>✦</span><strong>暂时没有任务</strong><p>添加第一项待办，或换个筛选条件。</p></div>

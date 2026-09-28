@@ -123,6 +123,14 @@ def test_todo_quadrants_and_calendar_endpoint(authenticated_client) -> None:
     assert calendar.status_code == 200, calendar.text
     assert any(item["title"] == "准备报告" for item in calendar.json()["items"])
 
+    spanning = authenticated_client.post("/api/v1/todos", json={
+        "title": "跨周任务", "start_date": "2026-09-26", "end_date": "2026-10-05",
+    })
+    assert spanning.status_code == 201, spanning.text
+    overlap = authenticated_client.get("/api/v1/todos/calendar?from_date=2026-09-28&to_date=2026-10-04")
+    assert overlap.status_code == 200, overlap.text
+    assert any(item["title"] == "跨周任务" for item in overlap.json()["items"])
+
 
 def test_new_recurring_todos_require_end_date(authenticated_client) -> None:
     response = authenticated_client.post("/api/v1/todo-series", json={
