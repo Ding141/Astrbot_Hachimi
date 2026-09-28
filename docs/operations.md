@@ -58,7 +58,7 @@ sudo docker compose down
 2. 安装 Docker/Compose 后，在服务器准备项目文件。可从代码仓库取公开代码；不要把本地 `.git`、`.venv` 或容器缓存当作迁移依赖。
 3. 私密转移 SQLite 备份和 AstrBot `data/`；`.env` 不要从旧机器复制，也不要放入代码仓库。在服务器运行 `./scripts/init-local.sh` 生成独立配置，再把 `.env` 中的 `APP_UID`、`APP_GID` 设置为 `id -u`、`id -g` 的结果，然后执行 `sudo chown -R "$(id -u):$(id -g)" data/service backups`，让 API 容器继续以目标机普通用户写数据库和备份。本机 HTTP 测试使用 `COOKIE_SECURE=false`；配置 Tailscale Serve HTTPS 后，服务器 `.env` 改为 `COOKIE_SECURE=true`。
 4. 恢复 SQLite，按需重建 API 镜像并启动项目 Compose 服务；核对迁移前备份、服务健康状态与日志。若 AstrBot 容器无法读写迁来的 `data/astrbot/`，按当前固定镜像所使用的容器用户修正该目录属主。检查模型和平台凭据是否仍有效。
-5. 若需从外部设备访问网页，按 [Tailscale Serve 操作指南](remote-access.md)为服务器和指定电脑启用 Tailscale，并配置设备审批与访问策略。不要开放 Todo 网页或 AstrBot WebUI 的公网端口，也不要启用 Funnel。
+5. 若需从外部设备访问网页，按 [Tailscale Serve 操作指南](remote-access.md)为实际运行项目的服务器和指定电脑启用 Tailscale，并配置设备审批与访问策略。Serve 路由属于单台设备；本机/WSL 测试机的配置不会自动迁移，需在服务器重新运行两条 Serve 命令，并使用服务器输出的 HTTPS 地址。不要开放 Todo 网页或 AstrBot WebUI 的公网端口，也不要启用 Funnel。
 
 ## 更新与回滚
 

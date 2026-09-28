@@ -166,7 +166,39 @@ curl -fsS http://127.0.0.1:8080/healthz
 
 ### 5. 从自己的电脑管理服务器
 
-按 [Tailscale 远程访问操作指南](remote-access.md)安装 Tailscale、批准指定电脑、配置访问策略，并通过 Tailscale Serve 为两个回环绑定的管理页面提供 HTTPS 地址。配置服务器 `.env` 为 `COOKIE_SECURE=true` 后，日常只需在电脑上连接 Tailscale 并打开 Serve 状态显示的两个地址；不需要 SSH 隧道命令。不要通过公网反向代理或安全组直接开放项目端口，也不要启用 Funnel。
+Tailscale Serve 必须配置在**真正运行项目的服务器**上。此前在本机/WSL 测试环境中配置成功，不会自动把 Serve 路由复制到新服务器；每台 Tailscale 设备有自己的 Serve 配置，新服务器也会有自己的设备名和 HTTPS 地址。
+
+按 [Tailscale 远程访问操作指南](remote-access.md)完成账号、设备审批、访问策略、MagicDNS 和 HTTPS 证书设置。部署到真实服务器时，按以下顺序操作：
+
+1. 确认生产服务器和 Windows 客户端都加入同一个 tailnet；在管理控制台批准生产服务器和授权电脑。访问策略中的服务器 Tailscale IP 要替换为生产服务器的实际 IP，允许已授权电脑连接服务器 TCP `443` 和 `8443`。
+2. 在生产服务器项目目录确认容器正常，并且两个网页在服务器本机可用：
+
+   ```bash
+   sudo docker compose ps
+   curl -fsS http://127.0.0.1:8080/healthz
+   curl -sS -o /dev/null -w 'AstrBot HTTP %{http_code}\n' http://127.0.0.1:6185/
+   ```
+
+3. 在生产服务器编辑 `.env`，将 `COOKIE_SECURE=false` 改为 `COOKIE_SECURE=true`，然后重启 API：
+
+   ```bash
+   sudo nano .env
+   sudo docker compose up -d assistant-api
+   ```
+
+4. 仍在生产服务器上检查 Serve 状态；确认没有要保留的其他 Serve 路由后，配置两个网页：
+
+   ```bash
+   sudo tailscale serve status
+   sudo tailscale serve --bg --https=443 http://127.0.0.1:8080
+   sudo tailscale serve --bg --https=8443 http://127.0.0.1:6185
+   sudo tailscale serve status
+   ```
+
+5. 从最后一条命令复制实际显示的 HTTPS 地址，在 Windows 浏览器中分别打开。Todo 通常使用 `https://生产服务器名.你的tailnet.ts.net/`；AstrBot WebUI 通常使用 `https://生产服务器名.你的tailnet.ts.net:8443/`。实际名称以生产服务器的 Serve 输出为准，不能沿用测试机显示的名称。
+6. 两个页面都能打开并成功登录后，日常只需在 Windows 上连接 Tailscale，再访问这两个 HTTPS 地址。不要访问 `http://生产服务器Tailscale-IP:8080` 或 `:6185`；也不要开放公网应用端口或启用 Funnel。
+
+若 Windows 上的 `tailscale serve status` 显示 `No serve config`，这是 Windows 自己没有托管 Serve 路由的状态；网页路由应在生产 Ubuntu 服务器上查看。详细排查步骤见 [Tailscale 远程访问操作指南](remote-access.md)。
 
 ## 三、日常维护
 

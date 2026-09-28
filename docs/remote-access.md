@@ -18,6 +18,8 @@
 
 Tailscale Serve 只向 tailnet 提供网页；它不会把管理页公开给普通互联网用户。**不要使用 Tailscale Funnel**，也不要在云安全组/主机防火墙开放项目的网页端口。
 
+**重要：**Tailscale ping 成功只说明两台设备能通过 tailnet 通信，不代表服务器已经为网页开了 Serve。项目的 `8080` 和 `6185` 只监听服务器本机回环地址，因此从 Windows 直接访问 `http://服务器Tailscale-IP:8080` 或 `:6185` 不会通。Serve 配置要在运行项目网页的 Ubuntu 设备上执行；在 Windows 运行 `tailscale serve status` 只会显示 Windows 自己的 Serve 配置，显示 `No serve config` 并不说明 Ubuntu 配置失败。
+
 ## 先了解安全边界
 
 访问需要同时满足：
@@ -145,6 +147,20 @@ sudo tailscale serve status
 
 `tailscale serve status` 会列出具体 HTTPS 地址和各地址转发到的本地端口。保留这个输出，下一步从授权电脑访问它显示的地址。
 
+配置成功时，输出结构类似下面这样（主机名和 tailnet 名称以你的服务器实际输出为准）：
+
+~~~text
+Available within your tailnet:
+
+https://<服务器名>.<tailnet名称>.ts.net/
+|-- proxy http://127.0.0.1:8080
+
+https://<服务器名>.<tailnet名称>.ts.net:8443/
+|-- proxy http://127.0.0.1:6185
+~~~
+
+末尾的 `tailscale serve status` 还应显示这两个路由，并标记为 `tailnet only`。这表示路由已经配置在 Ubuntu 服务器上，只能由 tailnet 内的设备访问。若在 Windows 执行状态命令看到 `No serve config`，无需在 Windows 再设置 Serve；直接从 Ubuntu 输出复制两个 HTTPS 地址。
+
 **不要运行 `tailscale funnel` 命令。**Serve 面向 tailnet；Funnel 会把服务发布到普通互联网。
 
 ## 第五步：设置安全 Cookie 并重启 API
@@ -155,7 +171,13 @@ sudo tailscale serve status
 COOKIE_SECURE=true
 ~~~
 
-然后重启助手 API：
+在服务器项目目录编辑 `.env` 并保存：
+
+~~~bash
+sudo nano .env
+~~~
+
+然后重启助手 API 让新设置生效：
 
 ~~~bash
 sudo docker compose up -d assistant-api
@@ -174,7 +196,7 @@ sudo docker compose up -d assistant-api
 
 第一个地址使用 HTTPS 443。第二个地址使用 HTTPS 8443。应以服务器 `tailscale serve status` 显示的完整主机名为准。
 
-分别验证两个网页能打开并用各自密码登录。设备被批准但网页打不开时，先检查服务器 Serve 状态、tailnet 访问策略以及 Tailscale 客户端状态；不要把网页端口映射到公网来“临时修复”。
+分别验证两个网页能打开并用各自密码登录。不要把示例中的机器名照抄到实际地址里，也不要改用 `http://Tailscale-IP:8080` / `:6185`。设备被批准但网页打不开时，先检查 Ubuntu 上的 Serve 状态、tailnet 访问策略以及 Windows Tailscale 客户端状态；不要把网页端口映射到公网来“临时修复”。
 
 ## Windows 上使用 Clash Verge TUN 时
 
@@ -195,8 +217,11 @@ rules:
 | 现象 | 处理方法 |
 | --- | --- |
 | `tailscale up` 提示登录链接 | 在浏览器登录你的 Tailscale 账号并批准设备，然后回服务器运行 `tailscale status` 确认在线。 |
+| Windows 的 `tailscale serve status` 显示 `No serve config` | 这是 Windows 自己的 Serve 状态。网页路由要在 Ubuntu 服务器上配置；在 Ubuntu 运行 `sudo tailscale serve status`，再从 Windows 打开 Ubuntu 显示的 HTTPS 地址。 |
+| Tailscale ping 成功，但 `http://100.x.x.x:8080` 打不开 | 这是项目预期的网络边界：`8080`/`6185` 绑定 `127.0.0.1`。在 Ubuntu 配置 Serve，并从 Windows 使用 Serve 输出的 HTTPS 地址。 |
 | 客户端看不到服务器 | 核对两端是否在同一个 tailnet、是否在线，以及服务器和电脑是否都已通过设备审批。 |
 | HTTPS 命令提示 DNS/证书未就绪 | 在控制台启用 MagicDNS 和 HTTPS Certificates；检查服务器网络能否连接 Tailscale。再运行对应 Serve 命令并查看提示。 |
+| Ubuntu 有 Serve 路由但 Windows 浏览器打不开 | Windows 确认 Tailscale 已连接；如果访问策略有限制，放行该电脑到服务器的 TCP `443`、`8443`。可在 PowerShell 对服务器 Tailscale IP 执行 `Test-NetConnection <服务器Tailscale-IP> -Port 443` 和 `-Port 8443`。 |
 | Serve 地址能打开，但提示来源校验失败 | 确认服务器运行当前项目版本、`COOKIE_SECURE=true`，并重启 `assistant-api`；不要在 Serve 前面再套一层未配置的反向代理。 |
 | Todo 能开，AstrBot 页面不能开 | 执行 `sudo tailscale serve status`，确认 8443 转发到 `http://127.0.0.1:6185`；确认 tailnet 策略放行服务器 8443。 |
 | 只有某台电脑打不开 | 检查该设备是否批准、策略中的客户端 Tailscale IP 是否正确，以及 Clash TUN 是否接管 `100.64.0.0/10`。 |
