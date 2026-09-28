@@ -100,7 +100,21 @@ function filterCalendarItems(items) {
     if (q && !`${item.title} ${item.notes} ${item.category}`.toLocaleLowerCase().includes(q)) return false;
     if (due === "today" && item.due_date !== today) return false;
     if (due === "upcoming" && !(item.due_date > today && item.due_date <= upcomingIso)) return false;
-    if (due === "overdue" && !(item.status === "open" && item.due_date && (item.due_date < today || (item.due_date === today && item.due_time && item.due_time < new Date().toLocaleTimeString("en-GB", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false })))) return false;
+    if (due === "overdue") {
+      const currentTime = new Date().toLocaleTimeString("en-GB", {
+        timeZone: "Asia/Shanghai",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+      const overdue = item.status === "open"
+        && item.due_date
+        && (
+          item.due_date < today
+          || (item.due_date === today && item.due_time && item.due_time < currentTime)
+        );
+      if (!overdue) return false;
+    }
     return true;
   });
 }
