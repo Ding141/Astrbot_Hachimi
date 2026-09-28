@@ -42,6 +42,10 @@ def _set_setting(conn, key: str, value: str) -> None:
 
 def _todo_payload(conn, row) -> dict[str, Any]:
     item = dict(row)
+    item.pop("parent_id", None)
+    item.pop("series_subtask_id", None)
+    item["end_date"] = item.get("due_date")
+    item["end_time"] = item.get("due_time")
     today = _now_local().date()
     due_day = date.fromisoformat(item["due_date"]) if item.get("due_date") else None
     item["urgent"] = (
@@ -56,16 +60,9 @@ def _todo_payload(conn, row) -> dict[str, Any]:
         (item["id"],),
     ).fetchall()
     item["reminders"] = [dict(reminder) for reminder in reminders]
-    children = conn.execute(
-        "SELECT id,title,status,due_date,due_time FROM todos WHERE parent_id=? AND deleted_at IS NULL ORDER BY id",
-        (item["id"],),
-    ).fetchall()
-    item["children"] = [dict(child) for child in children]
-    item["child_count"] = len(children)
-    item["child_done"] = sum(child["status"] == "completed" for child in children)
     if item.get("series_id"):
         series = conn.execute(
-            "SELECT frequency,month_day,weekdays_json,start_date,end_date,reminder_enabled,reminder_times_json FROM todo_series WHERE id=?",
+            "SELECT frequency,month_day,weekdays_json,start_date,end_date,start_time,due_time,reminder_enabled,reminder_times_json FROM todo_series WHERE id=?",
             (item["series_id"],),
         ).fetchone()
         if series:
@@ -76,6 +73,8 @@ def _todo_payload(conn, row) -> dict[str, Any]:
                 "start_date": series["start_date"],
                 "end_date": series["end_date"],
                 "weekdays": json.loads(series["weekdays_json"]),
+                "start_time": series["start_time"],
+                "end_time": series["due_time"],
                 "reminder_enabled": bool(series["reminder_enabled"]),
                 "reminder_times": json.loads(series["reminder_times_json"]),
             }
@@ -179,13 +178,15 @@ def _materialize_todo_series(conn, through: date | None = None) -> int:
                 ).fetchone()
                 if existing is None:
                     cursor = conn.execute(
-                        "INSERT INTO todos(title,notes,category,priority,due_date,due_time,status,created_at,updated_at,series_id,occurrence_date,important,urgent_override) "
-                        "VALUES(?,?,?,?,?,?,'open',?,?,?,?,?,?)",
+                        "INSERT INTO todos(title,notes,category,priority,start_date,start_time,due_date,due_time,status,created_at,updated_at,series_id,occurrence_date,important,urgent_override) "
+                        "VALUES(?,?,?,?,?,?,?,?,'open',?,?,?,?,?,?)",
                         (
                             series["title"],
                             series["notes"],
                             series["category"],
                             series["priority"],
+                            day.isoformat(),
+                            series["start_time"],
                             day.isoformat(),
                             series["due_time"],
                             utc_now(),
@@ -206,7 +207,7 @@ def _materialize_todo_series(conn, through: date | None = None) -> int:
                         and not existing["recurrence_override"]
                     ):
                         conn.execute(
-                            "UPDATE todos SET title=?,notes=?,category=?,priority=?,important=?,urgent_override=?,due_time=?,deleted_at=NULL,updated_at=? WHERE id=?",
+                            "UPDATE todos SET title=?,notes=?,category=?,priority=?,important=?,urgent_override=?,start_date=?,start_time=?,due_date=?,due_time=?,deleted_at=NULL,updated_at=? WHERE id=?",
                             (
                                 series["title"],
                                 series["notes"],
@@ -214,6 +215,9 @@ def _materialize_todo_series(conn, through: date | None = None) -> int:
                                 series["priority"],
                                 series["important"],
                                 series["urgent_override"],
+                                day.isoformat(),
+                                series["start_time"],
+                                day.isoformat(),
                                 series["due_time"],
                                 utc_now(),
                                 todo_id,
@@ -242,31 +246,6 @@ def _materialize_todo_series(conn, through: date | None = None) -> int:
                             when_local=when_local,
                             todo_id=int(todo["id"]),
                         )
-                if todo and todo["status"] == "open":
-                    templates = conn.execute(
-                        "SELECT id,title FROM todo_series_subtasks WHERE series_id=? AND deleted_at IS NULL ORDER BY position,id",
-                        (series["id"],),
-                    ).fetchall()
-                    for template in templates:
-                        child = conn.execute(
-                            "SELECT id,status,deleted_at,recurrence_override FROM todos WHERE parent_id=? AND series_subtask_id=?",
-                            (todo["id"], template["id"]),
-                        ).fetchone()
-                        if child is None:
-                            conn.execute(
-                                "INSERT INTO todos(title,category,priority,important,urgent_override,due_date,status,created_at,updated_at,parent_id,series_subtask_id) "
-                                "VALUES(?,?,?,?,?,?,'open',?,?,?,?)",
-                                (
-                                    template["title"], series["category"], series["priority"],
-                                    series["important"], series["urgent_override"], day.isoformat(),
-                                    utc_now(), utc_now(), todo["id"], template["id"],
-                                ),
-                            )
-                        elif child["status"] == "open" and not child["recurrence_override"]:
-                            conn.execute(
-                                "UPDATE todos SET title=?,deleted_at=NULL,updated_at=? WHERE id=?",
-                                (template["title"], utc_now(), child["id"]),
-                            )
             day += timedelta(days=1)
     return created
 
@@ -477,7 +456,9 @@ def _weekly_review_text(week_start: date) -> str:
             (start_utc, end_utc),
         ).fetchall()
         unfinished = conn.execute(
-            "SELECT title,due_date FROM todos WHERE status='open' AND deleted_at IS NULL AND due_date>=? AND due_date<? ORDER BY due_date,due_time",
+            "SELECT title,start_date,start_time,due_date,due_time FROM todos WHERE status='open' AND deleted_at IS NULL "
+            "AND COALESCE(due_date,start_date)>=? AND COALESCE(due_date,start_date)<? "
+            "ORDER BY COALESCE(start_date,due_date),start_time,due_date,due_time",
             (week_start.isoformat(), next_start.isoformat()),
         ).fetchall()
         review = conn.execute(
@@ -498,7 +479,12 @@ def _weekly_review_text(week_start: date) -> str:
         lines.extend(["\n已完成：", *[f"• {row['title']}" for row in completed[:12]]])
     if unfinished:
         lines.extend(
-            ["\n未完成：", *[f"• {row['title']}（{row['due_date']}）" for row in unfinished[:12]]]
+            ["\n未完成：", *[
+                f"• {row['title']}（{row['start_date'] or row['due_date'] or '未设日期'}"
+                f"{(' ' + row['start_time']) if row['start_time'] else ''} 至 "
+                f"{row['due_date'] or '未设置结束日期'}{(' ' + row['due_time']) if row['due_time'] else ''}）"
+                for row in unfinished[:12]
+            ]]
         )
     lines.append(f"\n下周已有 {next_week_courses} 门课程、{next_week_events} 项个人安排。")
     lines.append("可以直接在微信里告诉我本周总结和下周任务/安排，也可以在网页的“周复盘”填写。")

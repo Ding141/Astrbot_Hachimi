@@ -41,6 +41,61 @@ function shiftSchedule(direction) {
   loadSchedule();
 }
 
+function selectCourse(courseId, occurrenceDate) {
+  appState.selectedCourse = { id: courseId, date: occurrenceDate };
+  document.querySelectorAll(".course-entry").forEach((card) => {
+    const selected = Number(card.dataset.courseId) === courseId && card.dataset.courseDate === occurrenceDate;
+    card.classList.toggle("is-selected", selected);
+    card.setAttribute("aria-pressed", String(selected));
+  });
+  renderSelectedCourseDetails();
+}
+
+function renderSelectedCourseDetails() {
+  const panel = $("#schedule-course-details");
+  const workspace = $("#schedule-workspace");
+  const selection = appState.selectedCourse;
+  const course = selection && appState.courses.find((item) => item.id === selection.id && item.date === selection.date);
+  if (!course) {
+    panel.hidden = true;
+    panel.innerHTML = "";
+    workspace.classList.remove("has-selected-course");
+    return;
+  }
+  const isCancelled = course.exception?.action === "cancelled";
+  const weekPattern = (course.weeks || []).length
+    ? `第 ${(course.weeks || []).join("、")} 周`
+    : ({ odd: "单周", even: "双周", all: "每周" })[course.week_parity] || "未设置周次";
+  const periodTime = course.start_time || course.end_time
+    ? `${course.start_time || "未设置"}–${course.end_time || "未设置"}`
+    : `第 ${course.start_period || "?"}–${course.end_period || course.start_period || "?"} 节`;
+  panel.hidden = false;
+  workspace.classList.add("has-selected-course");
+  panel.innerHTML = `<header class="selected-course-heading"><div><span class="eyebrow">课程详情</span><h3>${escapeHtml(course.course_name)}</h3></div><button class="selected-course-close" type="button" aria-label="关闭课程详情">×</button></header>
+    <dl class="selected-course-facts"><div><dt>上课日期</dt><dd>${escapeHtml(course.date)}</dd></div><div><dt>上课时间</dt><dd>${escapeHtml(periodTime)}</dd></div><div><dt>教师</dt><dd>${escapeHtml(course.teacher || "未填写")}</dd></div><div><dt>地点</dt><dd>${escapeHtml(course.location || "未填写")}</dd></div><div><dt>轮次</dt><dd>${escapeHtml(weekPattern)}${course.exception?.action === "override" ? " · 本次已调整" : ""}</dd></div><div><dt>课前提醒</dt><dd>${course.reminder_enabled ? `提前 ${Number(course.reminder_lead_minutes || 10)} 分钟` : "未开启"}</dd></div></dl>
+    <div class="selected-course-actions"><button class="secondary selected-course-reminder" type="button">${course.reminder_enabled ? "调整 / 关闭提醒" : "添加课前提醒"}</button><button class="secondary selected-course-edit" type="button">编辑学期规则与轮次</button><button class="secondary selected-course-occurrence" type="button">调整本次课程</button>${isCancelled ? `<button class="secondary selected-course-restore" type="button">恢复本次上课</button>` : `<button class="secondary selected-course-cancel" type="button">本次停课</button>`}<button class="secondary danger-button selected-course-delete" type="button">删除整门课</button></div>`;
+  panel.querySelector(".selected-course-close").addEventListener("click", () => {
+    appState.selectedCourse = null;
+    renderSelectedCourseDetails();
+    document.querySelectorAll(".course-entry").forEach((card) => { card.classList.remove("is-selected"); card.setAttribute("aria-pressed", "false"); });
+  });
+  panel.querySelector(".selected-course-reminder").addEventListener("click", () => toggleCourseAlert(course.id, Boolean(course.reminder_enabled), Number(course.reminder_lead_minutes || 10)));
+  panel.querySelector(".selected-course-edit").addEventListener("click", () => openCourseEditor(course.id));
+  panel.querySelector(".selected-course-occurrence").addEventListener("click", () => openCourseOccurrenceEditor(course.id, course.date));
+  panel.querySelector(".selected-course-cancel")?.addEventListener("click", () => cancelCourseOccurrenceFor(course.id, course.date));
+  panel.querySelector(".selected-course-restore")?.addEventListener("click", () => restoreCourseOccurrence(course.id, course.date));
+  panel.querySelector(".selected-course-delete").addEventListener("click", () => deleteCourse(course.id));
+}
+
+async function cancelCourseOccurrenceFor(courseId, day) {
+  if (!window.confirm(`确认只取消「${appState.courses.find((item) => item.id === courseId && item.date === day)?.course_name || "这门课"}」在 ${day} 的上课？`)) return;
+  try {
+    await api(`/api/v1/courses/${courseId}/occurrences/${day}`, { method: "PUT", body: JSON.stringify({ action: "cancelled" }) });
+    toast("这次课程已标记为停课。");
+    await loadSchedule();
+  } catch (error) { toast(error.message, "error"); }
+}
+
 async function loadSchedule() {
   const anchor = $("#schedule-date").value || localToday();
   appState.scheduleAnchor = anchor;
@@ -96,17 +151,23 @@ async function loadSchedule() {
         const end = Math.max(start, Math.min(14, item.end_period));
         const range = `${PERIOD_TIMES[start - 1][0]}–${PERIOD_TIMES[end - 1][1]}`;
         if (item.kind === "event") return `<article class="timetable-entry personal-entry" style="grid-column:${item.lane + 1};grid-row:${start}/${end + 1}"><div class="entry-time">第${start}–${end}节 · ${range}</div><strong>${escapeHtml(item.title)}</strong>${item.frequency === "weekly" ? "<small>每周重复</small>" : ""}<div class="entry-actions"><button class="event-edit" type="button" data-id="${item.id}">编辑</button><button class="event-delete" type="button" data-id="${item.id}">删除</button></div></article>`;
-        return `<article class="timetable-entry course-entry" style="grid-column:${item.lane + 1};grid-row:${start}/${end + 1}"><div class="entry-time">第${start}–${end}节 · ${range}</div><strong>${escapeHtml(item.course_name)}</strong><small>${[item.location && `地点 ${item.location}`, item.teacher && `老师 ${item.teacher}`].filter(Boolean).map(escapeHtml).join(" · ") || "未填写地点和教师"}</small><button class="course-alert ${item.reminder_enabled ? "enabled" : ""}" type="button" title="${item.reminder_enabled ? "关闭课前提醒" : "开启课前提醒"}" aria-label="${item.reminder_enabled ? "关闭课前提醒" : "开启课前提醒"}" data-id="${item.id}" data-enabled="${item.reminder_enabled ? "1" : "0"}" data-lead="${item.reminder_lead_minutes || 10}">${item.reminder_enabled ? `🔔 ${item.reminder_lead_minutes || 10}分` : "＋ 提醒"}</button><div class="course-form-actions"><button class="course-edit-action" type="button" data-id="${item.id}">编辑学期课程</button><button class="course-occurrence-action" type="button" data-id="${item.id}" data-date="${day.date}">调整本次</button><button class="course-delete-action" type="button" data-id="${item.id}">删除整门课</button>${item.exception ? `<button class="course-restore-action" type="button" data-id="${item.id}" data-date="${day.date}">恢复本次</button>` : ""}</div></article>`;
+        const cancelled = item.exception?.action === "cancelled";
+        const selected = appState.selectedCourse?.id === item.id && appState.selectedCourse?.date === day.date;
+        return `<article class="timetable-entry course-entry ${cancelled ? "is-cancelled" : ""} ${selected ? "is-selected" : ""}" style="grid-column:${item.lane + 1};grid-row:${start}/${end + 1}" tabindex="0" role="button" aria-pressed="${selected}" aria-label="查看课程 ${escapeHtml(item.course_name)} 详情" data-course-id="${item.id}" data-course-date="${day.date}"><div class="entry-time">第${start}–${end}节 · ${range}</div><strong>${escapeHtml(item.course_name)}</strong><small>${[item.teacher && `老师 ${item.teacher}`, item.location && `地点 ${item.location}`].filter(Boolean).map(escapeHtml).join(" · ") || "未填写教师和地点"}</small>${cancelled ? "<small>本次停课</small>" : ""}</article>`;
       }).join("");
       return `<section class="timetable-day-track" style="--lanes:${laneCount}">${emptySlots.join("")}${cards}</section>`;
     }).join("");
     const axis = PERIOD_TIMES.map(([start, end], index) => `<div class="period-label ${[5, 10].includes(index + 1) ? "session-break" : ""}"><strong>第${index + 1}节</strong><span>${start}</span><small>${end}</small></div>`).join("");
     grid.style.setProperty("--day-count", String(columns));
     grid.innerHTML = `<div class="timetable-head"><div class="period-head">节次</div>${header}</div><div class="timetable-body"><div class="period-axis">${axis}</div>${tracks}</div>`;
-    grid.querySelectorAll(".course-alert").forEach((button) => button.addEventListener("click", () => toggleCourseAlert(button.dataset.id, button.dataset.enabled === "1", Number(button.dataset.lead))));
-    grid.querySelectorAll(".course-edit-action").forEach((button) => button.addEventListener("click", () => openCourseEditor(Number(button.dataset.id))));
-    grid.querySelectorAll(".course-delete-action").forEach((button) => button.addEventListener("click", () => deleteCourse(Number(button.dataset.id))));
-    grid.querySelectorAll(".course-occurrence-action").forEach((button) => button.addEventListener("click", () => openCourseOccurrenceEditor(Number(button.dataset.id), button.dataset.date)));
+    const visibleCourseKeys = new Set(shownDays.flatMap((day) => [...day.courses, ...(day.cancelled_courses || [])].map((course) => `${course.id}:${day.date}`)));
+    if (appState.selectedCourse && !visibleCourseKeys.has(`${appState.selectedCourse.id}:${appState.selectedCourse.date}`)) appState.selectedCourse = null;
+    grid.querySelectorAll(".course-entry").forEach((card) => {
+      const select = () => selectCourse(Number(card.dataset.courseId), card.dataset.courseDate);
+      card.addEventListener("click", select);
+      card.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(); } });
+    });
+    renderSelectedCourseDetails();
     grid.querySelectorAll(".course-restore-action").forEach((button) => button.addEventListener("click", () => restoreCourseOccurrence(Number(button.dataset.id), button.dataset.date)));
     grid.querySelectorAll(".event-edit").forEach((button) => button.addEventListener("click", () => editScheduleEvent(Number(button.dataset.id), result.days)));
     grid.querySelectorAll(".event-delete").forEach((button) => button.addEventListener("click", () => deleteScheduleEvent(button.dataset.id)));

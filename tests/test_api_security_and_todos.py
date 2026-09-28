@@ -27,31 +27,27 @@ def test_login_checks_origin_and_throttles_failures(client) -> None:
     assert throttled.headers.get("retry-after")
 
 
-def test_todo_parent_waits_for_children(authenticated_client) -> None:
-    response = authenticated_client.post(
-        "/api/v1/todos",
-        json={"title": "Project", "notes": "<img src=x onerror=alert(1)>"},
-    )
-    assert response.status_code == 201
-    parent_id = response.json()["id"]
-    child = authenticated_client.post(
-        "/api/v1/todos",
-        json={"title": "Research", "parent_id": parent_id},
-    )
-    assert child.status_code == 201
+def test_todo_start_end_times_and_multiple_reminders(authenticated_client) -> None:
+    response = authenticated_client.post("/api/v1/todos", json={
+        "title": "完成报告", "start_date": "2026-10-01", "start_time": "13:00",
+        "end_date": "2026-10-01", "end_time": "16:30",
+        "reminders": [
+            {"remind_at": "2026-09-30T20:00"},
+            {"remind_at": "2026-10-01T12:30"},
+        ],
+    })
+    assert response.status_code == 201, response.text
+    item = response.json()
+    assert (item["start_date"], item["start_time"]) == ("2026-10-01", "13:00")
+    assert (item["end_date"], item["end_time"]) == ("2026-10-01", "16:30")
+    assert len(item["reminders"]) == 2
+    assert "children" not in item
 
-    parent_complete = authenticated_client.post(
-        f"/api/v1/todos/{parent_id}/complete",
-    )
-    assert parent_complete.status_code == 409
-    child_complete = authenticated_client.post(
-        f"/api/v1/todos/{child.json()['id']}/complete",
-    )
-    assert child_complete.status_code == 200
-    parent_complete = authenticated_client.post(
-        f"/api/v1/todos/{parent_id}/complete",
-    )
-    assert parent_complete.status_code == 200
+    updated = authenticated_client.patch(f"/api/v1/todos/{item['id']}", json={"end_time": "17:00"})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["end_time"] == "17:00"
+    completed = authenticated_client.post(f"/api/v1/todos/{item['id']}/complete")
+    assert completed.status_code == 200
 
 
 def test_weekly_todo_series_materializes_occurrences_and_multiple_reminders(
@@ -78,12 +74,23 @@ def test_weekly_todo_series_materializes_occurrences_and_multiple_reminders(
     assert occurrence["recurrence"]["frequency"] == "weekly"
     assert len(occurrence["reminders"]) == 2
 
+    changed = authenticated_client.patch(
+        f"/api/v1/todo-series/{response.json()['id']}",
+        json={
+            "frequency": "monthly", "month_day": 15,
+            "start_date": "2026-10-05", "end_date": "2026-12-31",
+        },
+    )
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["frequency"] == "monthly"
+    assert changed.json()["weekdays"] == []
 
-def test_monthly_todo_series_clamps_month_end_and_materializes_child_templates(authenticated_client) -> None:
+
+def test_monthly_todo_series_clamps_month_end_with_instance_times(authenticated_client) -> None:
     response = authenticated_client.post("/api/v1/todo-series", json={
         "title": "每月整理资料", "frequency": "monthly", "month_day": 31,
         "start_date": "2026-09-30", "end_date": "2026-11-30",
-        "important": True, "urgent": False, "subtasks": ["整理文件", "检查清单"],
+        "important": True, "urgent": False, "start_time": "13:00", "end_time": "14:30",
     })
     assert response.status_code == 201, response.text
     instances = response.json()["instances"]
@@ -91,8 +98,9 @@ def test_monthly_todo_series_clamps_month_end_and_materializes_child_templates(a
     assert dates[:3] == ["2026-09-30", "2026-10-31", "2026-11-30"]
     assert instances[0]["important"] is True
     assert instances[0]["urgent"] is False
-    assert len(instances[0]["children"]) == 2
-    assert len({child["id"] for item in instances[:3] for child in item["children"]}) == 6
+    assert instances[0]["start_time"] == "13:00"
+    assert instances[0]["end_time"] == "14:30"
+    assert "children" not in instances[0]
     automatic_urgency = authenticated_client.patch(
         f"/api/v1/todo-series/{response.json()['id']}", json={"urgent": None}
     )
@@ -100,20 +108,17 @@ def test_monthly_todo_series_clamps_month_end_and_materializes_child_templates(a
     assert automatic_urgency.json()["urgent"] is None
 
 
-def test_todo_inline_subtasks_quadrants_and_calendar_endpoint(authenticated_client) -> None:
+def test_todo_quadrants_and_calendar_endpoint(authenticated_client) -> None:
     created = authenticated_client.post("/api/v1/todos", json={
-        "title": "准备报告", "category": "学习", "due_date": "2026-09-29",
-        "important": True, "urgent": True, "subtasks": ["列提纲", "补数据"],
+        "title": "准备报告", "category": "学习", "start_date": "2026-09-29",
+        "start_time": "09:00", "end_date": "2026-09-29", "end_time": "12:00",
+        "important": True, "urgent": True,
     })
     assert created.status_code == 201, created.text
     assert created.json()["important"] is True
     assert created.json()["urgent"] is True
-    assert len(created.json()["children"]) == 2
-    updated = authenticated_client.patch(f"/api/v1/todos/{created.json()['id']}", json={
-        "subtasks": ["列提纲", "找参考资料"],
-    })
-    assert updated.status_code == 200, updated.text
-    assert [child["title"] for child in updated.json()["children"]] == ["列提纲", "找参考资料"]
+    assert created.json()["start_time"] == "09:00"
+    assert created.json()["end_time"] == "12:00"
     calendar = authenticated_client.get("/api/v1/todos/calendar?from_date=2026-09-28&to_date=2026-10-04")
     assert calendar.status_code == 200, calendar.text
     assert any(item["title"] == "准备报告" for item in calendar.json()["items"])

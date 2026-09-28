@@ -46,7 +46,7 @@ sudo docker compose down
 
 - `./scripts/backup.sh` 调用 SQLite online backup，快照保存在 `backups/`。
 - `./scripts/restore.sh <文件名>` 要求备份位于项目 `backups/`，先做 SQLite 完整性检查，再以临时文件原子替换当前数据库。
-- 个人助手从旧 schema 升级到 v4 时，会先在 `backups/` 生成带版本号的 SQLite 一致性快照。迁移会补充学期结束日期、课程单次例外、Todo 四象限字段和重复任务子项模板；旧学期结束日期按 18 周估算并标记为推测值，建议在网页中核对。
+- 个人助手从旧 schema 升级到 v5 时，会先在 `backups/` 生成带版本号的 SQLite 一致性快照。迁移会增加待办开始日期/时刻和重复待办每期开始时刻；旧学期结束日期按 18 周估算并标记为推测值，建议在网页中核对。已停用的子任务数据会软删除并从活动列表分离，迁移前快照仍可恢复。
 - JSON 导出包含 Todo、重复系列、提醒、课程、个人日程、周复盘、非秘密设置和操作记录；CSV 可分别导出这些主要资源，不包含密钥。
 - 另行备份 `data/astrbot/` 以保存 AstrBot 平台和提供商配置。该目录可能含有平台登录态与密钥，转移时使用私密、加密的方式。
 - 至少将 `backups/` 复制到另一块磁盘或受控位置；同盘备份无法防止磁盘故障。
@@ -84,7 +84,7 @@ sudo docker compose logs --tail=100 assistant-api astrbot
 
 如生产环境设置了不同的 `WEB_PORT`，把健康检查地址中的 `8080` 换成对应端口。网页仍经服务器原有 Tailscale Serve HTTPS 地址访问；只有 API/插件代码更新时，通常不需要重新配置 Serve。
 
-如果新版本无法启动，先记录日志并备份当前数据库，然后停止服务。由于本次 v4 数据库结构不能交给旧版本程序使用，回滚必须同时恢复旧代码和更新前的数据库备份：
+如果新版本无法启动，先记录日志并备份当前数据库，然后停止服务。由于 v5 数据库结构不能交给旧版本程序使用，回滚必须同时恢复旧代码和更新前的数据库备份：
 
 1. 找到更新前记录的 Git 提交号和更新前的 SQLite 备份文件。手工备份由 `./scripts/backup.sh` 创建，名称类似 `assistant-20260928T120000Z.sqlite3`。
 2. 停止 Compose 服务：`sudo docker compose down`。如果 API 仍可用且故障后的数据也要保留，可在停止前另运行一次 `./scripts/backup.sh`；服务无法运行时，在停止后把 `data/service/assistant.sqlite3` 复制到 `backups/` 并另存一份日志。

@@ -1,6 +1,6 @@
 name: astrbot_plugin_personal_assistant_todo
 display_name: 个人助手 Todo
-desc: 管理待办、重复任务和子任务；数据保存在项目内 SQLite 服务。
+desc: 管理待办的开始/结束时间、重复规则与提醒；数据保存在项目内 SQLite 服务。
 version: 0.5.0
 author: Local Personal Assistant
 repo: ""

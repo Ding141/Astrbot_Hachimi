@@ -110,7 +110,7 @@ def test_v1_migration_preserves_existing_todo_and_course(tmp_path, monkeypatch) 
 
     db.initialize_database()
     with sqlite3.connect(database_path) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
         assert (
             conn.execute("SELECT title FROM todos WHERE id=1").fetchone()[0]
             == "Existing private task"
@@ -121,6 +121,8 @@ def test_v1_migration_preserves_existing_todo_and_course(tmp_path, monkeypatch) 
         )
         term = conn.execute("SELECT end_date,end_date_inferred FROM terms WHERE id=1").fetchone()
         assert tuple(term) == ("2027-01-10", 1)
+        task_columns = {row[1] for row in conn.execute("PRAGMA table_info(todos)")}
+        assert {"start_date", "start_time"} <= task_columns
     assert list((tmp_path / "backups").glob("assistant-pre-migration-v1-*.sqlite3"))
 
 

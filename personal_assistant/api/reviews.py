@@ -34,11 +34,13 @@ def get_weekly_review(week_start: date, actor: str = Depends(request_actor)) -> 
             "SELECT * FROM weekly_reviews WHERE week_start=?", (monday.isoformat(),)
         ).fetchone()
         completed = conn.execute(
-            "SELECT id,title,completed_at,parent_id FROM todos WHERE status='completed' AND completed_at>=? AND completed_at<? ORDER BY completed_at",
+            "SELECT id,title,completed_at FROM todos WHERE status='completed' AND completed_at>=? AND completed_at<? ORDER BY completed_at",
             (start_utc, end_utc),
         ).fetchall()
         open_tasks = conn.execute(
-            "SELECT id,title,due_date,due_time,parent_id FROM todos WHERE status='open' AND deleted_at IS NULL AND due_date>=? AND due_date<? ORDER BY due_date,due_time",
+            "SELECT id,title,start_date,start_time,due_date,due_time FROM todos WHERE status='open' AND deleted_at IS NULL "
+            "AND COALESCE(due_date,start_date)>=? AND COALESCE(due_date,start_date)<? "
+            "ORDER BY COALESCE(start_date,due_date),start_time,due_date,due_time",
             (monday.isoformat(), next_monday.isoformat()),
         ).fetchall()
         next_week = []

@@ -20,11 +20,13 @@ class AgendaModule:
             day = _course_query_for_date(conn, target)
             events = _events_for_date(conn, target)
             todos = conn.execute(
-                "SELECT title,due_time FROM todos WHERE status='open' AND deleted_at IS NULL AND due_date=? ORDER BY due_time,id",
+                "SELECT title,start_time,due_time FROM todos WHERE status='open' AND deleted_at IS NULL "
+                "AND COALESCE(due_date,start_date)=? ORDER BY COALESCE(start_time,due_time),id",
                 (target.isoformat(),),
             ).fetchall()
             overdue = conn.execute(
-                "SELECT title,due_date FROM todos WHERE status='open' AND deleted_at IS NULL AND due_date<? ORDER BY due_date,due_time LIMIT 20",
+                "SELECT title,start_date,due_date FROM todos WHERE status='open' AND deleted_at IS NULL "
+                "AND COALESCE(due_date,start_date)<? ORDER BY COALESCE(due_date,start_date),due_time LIMIT 20",
                 (target.isoformat(),),
             ).fetchall()
 
@@ -48,11 +50,11 @@ class AgendaModule:
 
         lines.append(f"\n✅ 今天到期 · {len(todos)} 项")
         lines.extend(
-            f"• {row['title']}{' · ' + row['due_time'] if row['due_time'] else ''}" for row in todos
+            f"• {row['title']}{' · ' + (row['start_time'] or row['due_time']) if row['start_time'] or row['due_time'] else ''}" for row in todos
         )
         if not todos:
             lines.append("• 暂无到期任务。")
         if overdue:
             lines.append(f"\n⏳ 逾期任务 · {len(overdue)} 项")
-            lines.extend(f"• {row['title']} · 截止 {row['due_date']}" for row in overdue)
+            lines.extend(f"• {row['title']} · 截止 {row['due_date'] or row['start_date']}" for row in overdue)
         return "\n".join(lines)

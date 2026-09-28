@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -39,66 +39,6 @@ def _series_view(conn, series) -> dict[str, Any]:
     return item
 
 
-def _replace_series_subtasks(conn, series_id: int, titles: list[str]) -> None:
-    now = utc_now()
-    normalized = [title.strip() for title in titles if title.strip()]
-    if len(normalized) != len(titles) or len(normalized) != len(set(normalized)):
-        raise HTTPException(status_code=422, detail="子任务名称不能为空且不能重复")
-    current = conn.execute(
-        "SELECT id,title FROM todo_series_subtasks WHERE series_id=? AND deleted_at IS NULL ORDER BY position,id",
-        (series_id,),
-    ).fetchall()
-    keep = {row["title"]: row["id"] for row in current if row["title"] in normalized}
-    removed = [row["id"] for row in current if row["title"] not in normalized]
-    for template_id in removed:
-        conn.execute(
-            "UPDATE todo_series_subtasks SET deleted_at=?,updated_at=? WHERE id=?",
-            (now, now, template_id),
-        )
-        conn.execute(
-            "UPDATE todos SET deleted_at=?,updated_at=? WHERE series_subtask_id=? AND status='open' AND deleted_at IS NULL AND recurrence_override=0",
-            (now, now, template_id),
-        )
-    for position, title in enumerate(normalized):
-        if title in keep:
-            conn.execute(
-                "UPDATE todo_series_subtasks SET position=?,updated_at=? WHERE id=?",
-                (position, now, keep[title]),
-            )
-        else:
-            conn.execute(
-                "INSERT INTO todo_series_subtasks(series_id,title,position,created_at,updated_at) VALUES(?,?,?,?,?)",
-                (series_id, title, position, now, now),
-            )
-
-
-def _replace_todo_subtasks(conn, todo_id: int, titles: list[str], actor: str) -> None:
-    normalized = [title.strip() for title in titles if title.strip()]
-    if len(normalized) != len(titles) or len(normalized) != len(set(normalized)):
-        raise HTTPException(status_code=422, detail="子任务名称不能为空且不能重复")
-    now = utc_now()
-    current = conn.execute(
-        "SELECT * FROM todos WHERE parent_id=? AND deleted_at IS NULL ORDER BY id", (todo_id,)
-    ).fetchall()
-    by_title = {row["title"]: row for row in current}
-    for row in current:
-        if row["title"] not in normalized:
-            conn.execute(
-                "UPDATE todos SET deleted_at=?,updated_at=?,recurrence_override=1,series_subtask_id=NULL WHERE id=?",
-                (now, now, row["id"]),
-            )
-            _cancel_unsent_reminders(conn, int(row["id"]), actor, "remove_todo_subtask")
-    parent = conn.execute("SELECT * FROM todos WHERE id=?", (todo_id,)).fetchone()
-    for title in normalized:
-        if title in by_title:
-            continue
-        conn.execute(
-            "INSERT INTO todos(title,category,priority,important,urgent_override,due_date,status,created_at,updated_at,parent_id) "
-            "VALUES(?,?,?,?,?,?, 'open',?,?,?)",
-            (title, parent["category"], parent["priority"], parent["important"], parent["urgent_override"], parent["due_date"], now, now, todo_id),
-        )
-
-
 @router.get("/api/v1/todos")
 def list_todos(
     q: str = "",
@@ -118,22 +58,25 @@ def list_todos(
         params.extend([needle, needle, needle])
     today = _now_local().date().isoformat()
     if due == "today":
-        clauses.append("due_date=?")
+        clauses.append("COALESCE(due_date,start_date)=?")
         params.append(today)
     elif due == "upcoming":
         last_day = (_now_local().date() + timedelta(days=7)).isoformat()
-        clauses.append("due_date>? AND due_date<=?")
+        clauses.append("COALESCE(due_date,start_date)>? AND COALESCE(due_date,start_date)<=?")
         params.extend([today, last_day])
     elif due == "overdue":
         current_time = _now_local().strftime("%H:%M")
         clauses.append(
-            "status='open' AND (due_date<? OR (due_date=? AND due_time IS NOT NULL AND due_time<?))"
+            "status='open' AND (COALESCE(due_date,start_date)<? OR "
+            "(due_date=? AND due_time IS NOT NULL AND due_time<?) OR "
+            "(due_date IS NULL AND start_date=? AND start_time IS NOT NULL AND start_time<?))"
         )
-        params.extend([today, today, current_time])
+        params.extend([today, today, current_time, today, current_time])
     sql = (
         "SELECT * FROM todos WHERE "
         + " AND ".join(clauses)
-        + " ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END,due_date,due_time,important DESC,priority DESC,id DESC"
+        + " ORDER BY CASE WHEN COALESCE(start_date,due_date) IS NULL THEN 1 ELSE 0 END,"
+        "COALESCE(start_date,due_date),start_time,due_date,due_time,important DESC,priority DESC,id DESC"
     )
     with connection() as conn:
         rows = conn.execute(sql, params).fetchall()
@@ -155,11 +98,12 @@ def todo_calendar(
     with connection() as conn:
         _materialize_todo_series(conn, to_date)
         rows = conn.execute(
-            "SELECT * FROM todos WHERE deleted_at IS NULL AND due_date>=? AND due_date<=? ORDER BY due_date,due_time,important DESC,priority DESC,id",
+            "SELECT * FROM todos WHERE deleted_at IS NULL AND COALESCE(start_date,due_date)>=? "
+            "AND COALESCE(start_date,due_date)<=? ORDER BY COALESCE(start_date,due_date),start_time,due_date,due_time,important DESC,priority DESC,id",
             (from_date.isoformat(), to_date.isoformat()),
         ).fetchall()
         undated = conn.execute(
-            "SELECT * FROM todos WHERE deleted_at IS NULL AND due_date IS NULL ORDER BY important DESC,priority DESC,id DESC LIMIT 200",
+            "SELECT * FROM todos WHERE deleted_at IS NULL AND due_date IS NULL AND start_date IS NULL ORDER BY important DESC,priority DESC,id DESC LIMIT 200",
         ).fetchall()
         return {
             "from_date": from_date.isoformat(),
@@ -172,26 +116,11 @@ def todo_calendar(
 
 @router.post("/api/v1/todos", status_code=201)
 def create_todo(body: TodoCreate, actor: str = Depends(request_actor)) -> dict[str, Any]:
-    if body.due_time and not body.due_date:
-        raise HTTPException(status_code=422, detail="设置截止时刻时也需要提供截止日期")
-    if body.subtasks and body.parent_id is not None:
-        raise HTTPException(status_code=422, detail="子任务不能再包含子任务")
-    if any(not title.strip() for title in body.subtasks) or len({title.strip() for title in body.subtasks}) != len(body.subtasks):
-        raise HTTPException(status_code=422, detail="子任务名称不能为空且不能重复")
     now = utc_now()
     with connection() as conn:
-        if body.parent_id is not None:
-            parent = conn.execute(
-                "SELECT id,parent_id FROM todos WHERE id=? AND deleted_at IS NULL",
-                (body.parent_id,),
-            ).fetchone()
-            if not parent:
-                raise HTTPException(status_code=404, detail="父任务不存在")
-            if parent["parent_id"] is not None:
-                raise HTTPException(status_code=422, detail="目前只支持一层子任务")
         cursor = conn.execute(
-            "INSERT INTO todos(title,notes,category,priority,important,urgent_override,due_date,due_time,created_at,updated_at,parent_id) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO todos(title,notes,category,priority,important,urgent_override,start_date,start_time,due_date,due_time,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 body.title.strip(),
                 body.notes,
@@ -199,26 +128,15 @@ def create_todo(body: TodoCreate, actor: str = Depends(request_actor)) -> dict[s
                 body.priority,
                 int(body.important if body.important is not None else body.priority >= 3),
                 None if body.urgent is None else int(body.urgent),
-                body.due_date.isoformat() if body.due_date else None,
-                body.due_time.strftime("%H:%M") if body.due_time else None,
+                body.start_date.isoformat() if body.start_date else None,
+                body.start_time.strftime("%H:%M") if body.start_time else None,
+                body.end_date.isoformat() if body.end_date else None,
+                body.end_time.strftime("%H:%M") if body.end_time else None,
                 now,
                 now,
-                body.parent_id,
             ),
         )
         todo_id = int(cursor.lastrowid)
-        for title in body.subtasks:
-            conn.execute(
-                "INSERT INTO todos(title,category,priority,important,urgent_override,due_date,status,created_at,updated_at,parent_id) "
-                "VALUES(?,?,?,?,?,?,'open',?,?,?)",
-                (
-                    title.strip(), body.category, body.priority,
-                    int(body.important if body.important is not None else body.priority >= 3),
-                    None if body.urgent is None else int(body.urgent),
-                    body.due_date.isoformat() if body.due_date else None,
-                    now, now, todo_id,
-                ),
-            )
         for reminder in body.reminders:
             _add_reminder(conn, body.title.strip(), reminder.remind_at, todo_id)
         after = conn.execute("SELECT * FROM todos WHERE id=?", (todo_id,)).fetchone()
@@ -236,10 +154,7 @@ def list_todo_series(actor: str = Depends(request_actor)) -> dict[str, Any]:
         result = []
         for series in series_rows:
             item = _series_view(conn, series)
-            item["subtasks"] = [row["title"] for row in conn.execute(
-                "SELECT title FROM todo_series_subtasks WHERE series_id=? AND deleted_at IS NULL ORDER BY position,id",
-                (series["id"],),
-            ).fetchall()]
+            item["end_time"] = item.pop("due_time")
             item["instances"] = [
                 _todo_payload(conn, row)
                 for row in conn.execute(
@@ -258,11 +173,9 @@ def create_todo_series(
     now = utc_now()
     reminder_times = sorted({value.strftime("%H:%M") for value in body.reminder_times})
     with connection() as conn:
-        if any(not title.strip() for title in body.subtasks) or len({title.strip() for title in body.subtasks}) != len(body.subtasks):
-            raise HTTPException(status_code=422, detail="子任务名称不能为空且不能重复")
         cursor = conn.execute(
-            "INSERT INTO todo_series(title,notes,category,priority,frequency,month_day,weekdays_json,start_date,end_date,due_time,important,urgent_override,reminder_enabled,reminder_times_json,created_at,updated_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO todo_series(title,notes,category,priority,frequency,month_day,weekdays_json,start_date,end_date,start_time,due_time,important,urgent_override,reminder_enabled,reminder_times_json,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 body.title.strip(),
                 body.notes,
@@ -273,7 +186,8 @@ def create_todo_series(
                 json.dumps(sorted(set(body.weekdays))),
                 body.start_date.isoformat(),
                 body.end_date.isoformat(),
-                body.due_time.strftime("%H:%M") if body.due_time else None,
+                body.start_time.strftime("%H:%M") if body.start_time else None,
+                body.end_time.strftime("%H:%M") if body.end_time else None,
                 int(body.important if body.important is not None else body.priority >= 3),
                 None if body.urgent is None else int(body.urgent),
                 int(body.reminder_enabled),
@@ -283,14 +197,13 @@ def create_todo_series(
             ),
         )
         series_id = int(cursor.lastrowid)
-        _replace_series_subtasks(conn, series_id, body.subtasks)
         _materialize_todo_series(conn)
         series = conn.execute("SELECT * FROM todo_series WHERE id=?", (series_id,)).fetchone()
         instances = conn.execute(
             "SELECT * FROM todos WHERE series_id=? ORDER BY occurrence_date LIMIT 12", (series_id,)
         ).fetchall()
         after = _series_view(conn, series)
-        after["subtasks"] = body.subtasks
+        after["end_time"] = after.pop("due_time")
         after["instances"] = [_todo_payload(conn, row) for row in instances]
         audit(conn, actor, "todo_series", series_id, "create", None, after)
         return after
@@ -303,7 +216,6 @@ def update_todo_series(
     actor: str = Depends(request_actor),
 ) -> dict[str, Any]:
     fields = body.model_dump(exclude_unset=True)
-    subtasks = fields.pop("subtasks", None)
     for key in (
         "title",
         "notes",
@@ -336,14 +248,17 @@ def update_todo_series(
         fields["urgent_override"] = None if urgent_value is None else int(urgent_value)
     if "frequency" in fields and fields["frequency"] == "monthly":
         fields["frequency"] = "daily"
+        fields.setdefault("weekdays_json", "[]")
     elif "frequency" in fields and fields["frequency"] in {"daily", "weekly"}:
         fields["month_day"] = None
     if "weekdays" in fields:
         fields["weekdays_json"] = json.dumps(sorted(set(fields.pop("weekdays"))))
     elif fields.get("frequency") == "daily":
         fields["weekdays_json"] = "[]"
-    if "due_time" in fields:
-        fields["due_time"] = fields["due_time"].strftime("%H:%M") if fields["due_time"] else None
+    if "start_time" in fields:
+        fields["start_time"] = fields["start_time"].strftime("%H:%M") if fields["start_time"] else None
+    if "end_time" in fields:
+        fields["due_time"] = fields.pop("end_time").strftime("%H:%M") if fields["end_time"] else None
     if "reminder_times" in fields:
         fields["reminder_times_json"] = json.dumps(
             sorted({value.strftime("%H:%M") for value in fields.pop("reminder_times")})
@@ -364,6 +279,8 @@ def update_todo_series(
         candidate_weekdays = fields.get("weekdays_json", before["weekdays_json"])
         if candidate_frequency == "weekly" and not json.loads(candidate_weekdays):
             raise HTTPException(status_code=422, detail="每周重复需要至少选择一个星期")
+        if candidate_frequency != "weekly" and json.loads(candidate_weekdays):
+            raise HTTPException(status_code=422, detail="每日或每月重复不能设置星期")
         candidate_start = fields.get("start_date", before["start_date"])
         candidate_end = fields.get("end_date", before["end_date"])
         if candidate_end and candidate_start and candidate_end < candidate_start:
@@ -373,7 +290,7 @@ def update_todo_series(
         )
         if rule_changed and not candidate_end:
             raise HTTPException(status_code=422, detail="修改重复规则时必须设置停止日期")
-        if fields or subtasks is not None:
+        if fields:
             rule_changed = any(
                 key in fields for key in ("frequency", "month_day", "weekdays_json", "start_date", "end_date")
             )
@@ -383,8 +300,6 @@ def update_todo_series(
                 conn.execute(
                     f"UPDATE todo_series SET {assignments} WHERE id=?", [*fields.values(), series_id]
                 )
-            if subtasks is not None:
-                _replace_series_subtasks(conn, series_id, subtasks)
             if rule_changed:
                 conn.execute(
                     "UPDATE todos SET deleted_at=?,updated_at=? WHERE series_id=? AND status='open' AND deleted_at IS NULL "
@@ -399,9 +314,11 @@ def update_todo_series(
                     "priority=(SELECT priority FROM todo_series WHERE id=?),"
                     "important=(SELECT important FROM todo_series WHERE id=?),"
                     "urgent_override=(SELECT urgent_override FROM todo_series WHERE id=?),"
+                    "start_time=(SELECT start_time FROM todo_series WHERE id=?),"
                     "due_time=(SELECT due_time FROM todo_series WHERE id=?),updated_at=? "
                     "WHERE series_id=? AND status='open' AND deleted_at IS NULL AND recurrence_override=0 AND due_date>=?",
                     (
+                        series_id,
                         series_id,
                         series_id,
                         series_id,
@@ -423,10 +340,7 @@ def update_todo_series(
             _materialize_todo_series(conn)
         after_row = conn.execute("SELECT * FROM todo_series WHERE id=?", (series_id,)).fetchone()
         after = _series_view(conn, after_row)
-        after["subtasks"] = [row["title"] for row in conn.execute(
-            "SELECT title FROM todo_series_subtasks WHERE series_id=? AND deleted_at IS NULL ORDER BY position,id",
-            (series_id,),
-        ).fetchall()]
+        after["end_time"] = after.pop("due_time")
         audit(conn, actor, "todo_series", series_id, "update", before, after)
         return after
 
@@ -470,35 +384,14 @@ def bulk_delete(body: BulkDeleteRequest, actor: str = Depends(request_actor)) ->
             ).fetchone()
             if not before_row:
                 continue
-            targets = [todo_id]
-            targets.extend(
-                child["id"]
-                for child in conn.execute(
-                    "SELECT id FROM todos WHERE parent_id=? AND deleted_at IS NULL", (todo_id,)
-                ).fetchall()
+            target_before = dict(before_row)
+            conn.execute(
+                "UPDATE todos SET deleted_at=?,updated_at=?,recurrence_override=1 WHERE id=?",
+                (now, now, todo_id),
             )
-            for target_id in targets:
-                target_row = conn.execute(
-                    "SELECT * FROM todos WHERE id=? AND deleted_at IS NULL", (target_id,)
-                ).fetchone()
-                if not target_row:
-                    continue
-                target_before = dict(target_row)
-                conn.execute(
-                    "UPDATE todos SET deleted_at=?,updated_at=?,recurrence_override=1 WHERE id=?",
-                    (now, now, target_id),
-                )
-                _cancel_unsent_reminders(conn, target_id, actor, "cancel_after_todo_bulk_delete")
-                audit(
-                    conn,
-                    actor,
-                    "todo",
-                    target_id,
-                    "bulk_delete",
-                    target_before,
-                    {"deleted_at": now},
-                )
-                deleted += 1
+            _cancel_unsent_reminders(conn, todo_id, actor, "cancel_after_todo_bulk_delete")
+            audit(conn, actor, "todo", todo_id, "bulk_delete", target_before, {"deleted_at": now})
+            deleted += 1
     return {"deleted_count": deleted}
 
 
@@ -510,12 +403,10 @@ def update_todo(
     actor: str = Depends(request_actor),
 ) -> dict[str, Any]:
     fields = body.model_dump(exclude_unset=True)
-    subtasks_supplied = "subtasks" in fields
-    subtasks = fields.pop("subtasks", None)
-    if subtasks_supplied and subtasks is None:
-        raise HTTPException(status_code=422, detail="subtasks 不能设为 null；传空数组可清除子任务")
-    clear_due = fields.pop("clear_due_date", False)
-    clear_due_time = fields.pop("clear_due_time", False)
+    clear_start_date = fields.pop("clear_start_date", False)
+    clear_start_time = fields.pop("clear_start_time", False)
+    clear_end_date = bool(fields.pop("clear_end_date", False) | fields.pop("clear_due_date", False))
+    clear_end_time = bool(fields.pop("clear_end_time", False) | fields.pop("clear_due_time", False))
     clear_notes = fields.pop("clear_notes", False)
     clear_category = fields.pop("clear_category", False)
     reminders_supplied = "reminders" in fields
@@ -545,33 +436,58 @@ def update_todo(
         if not before_row:
             raise HTTPException(status_code=404, detail="找不到该任务")
         before = dict(before_row)
-        if subtasks is not None and before.get("parent_id") is not None:
-            raise HTTPException(status_code=422, detail="子任务不能再包含子任务")
         if before.get("series_id") and scope is None:
             raise HTTPException(
                 status_code=409, detail="这是重复任务，请指定 scope=occurrence 或 scope=series"
             )
         if not before.get("series_id") and scope == "series":
             raise HTTPException(status_code=409, detail="该任务不属于重复系列")
-        if clear_due:
-            fields["due_date"] = None
-            fields["due_time"] = None
-        elif clear_due_time:
-            fields["due_time"] = None
-        elif fields.get("due_date") is None and "due_date" in fields:
-            fields["due_time"] = None
-        resulting_date = fields.get("due_date", before["due_date"])
-        resulting_time = fields.get("due_time", before["due_time"])
-        if resulting_time and not resulting_date:
-            raise HTTPException(status_code=422, detail="设置截止时刻时也需要提供截止日期")
+        if clear_start_date:
+            fields["start_date"] = None
+            fields["start_time"] = None
+        elif clear_start_time:
+            fields["start_time"] = None
+        if clear_end_date:
+            fields["end_date"] = None
+            fields["end_time"] = None
+        elif clear_end_time:
+            fields["end_time"] = None
+        if fields.get("start_date") is None and "start_date" in fields:
+            fields["start_time"] = None
+        if fields.get("end_date") is None and "end_date" in fields:
+            fields["end_time"] = None
         if clear_notes:
             fields["notes"] = ""
         if clear_category:
             fields["category"] = ""
-        if "due_date" in fields and fields["due_date"] is not None:
-            fields["due_date"] = fields["due_date"].isoformat()
-        if "due_time" in fields and fields["due_time"] is not None:
-            fields["due_time"] = fields["due_time"].strftime("%H:%M")
+        if "start_date" in fields and fields["start_date"] is not None:
+            fields["start_date"] = fields["start_date"].isoformat()
+        if "end_date" in fields:
+            fields["due_date"] = fields.pop("end_date").isoformat() if fields["end_date"] else None
+        for time_field in ("start_time", "end_time"):
+            if time_field in fields:
+                parsed_time = fields.pop(time_field)
+                db_field = "due_time" if time_field == "end_time" else "start_time"
+                fields[db_field] = parsed_time.strftime("%H:%M") if parsed_time else None
+        candidate_start_date = fields.get("start_date", before.get("start_date"))
+        candidate_start_time = fields.get("start_time", before.get("start_time"))
+        candidate_end_date = fields.get("due_date", before.get("due_date"))
+        candidate_end_time = fields.get("due_time", before.get("due_time"))
+        if candidate_start_time and not candidate_start_date:
+            raise HTTPException(status_code=422, detail="设置开始时刻时也需要提供开始日期")
+        if candidate_end_time and not candidate_end_date:
+            raise HTTPException(status_code=422, detail="设置结束时刻时也需要提供结束日期")
+        if candidate_start_date and candidate_end_date:
+            start = date.fromisoformat(candidate_start_date)
+            end = date.fromisoformat(candidate_end_date)
+            if end < start or (
+                end == start
+                and candidate_start_time
+                and candidate_end_time
+                and datetime.combine(end, time.fromisoformat(candidate_end_time))
+                < datetime.combine(start, time.fromisoformat(candidate_start_time))
+            ):
+                raise HTTPException(status_code=422, detail="结束时间不能早于开始时间")
         if "title" in fields and fields["title"] is not None:
             fields["title"] = fields["title"].strip()
         if before.get("series_id") and scope == "series":
@@ -579,23 +495,18 @@ def update_todo(
                 raise HTTPException(
                     status_code=422, detail="修改整个系列的提醒请使用 reminder_times"
                 )
-            if "due_date" in fields or clear_due:
+            if "start_date" in fields or "due_date" in fields or clear_start_date or clear_end_date:
                 raise HTTPException(
-                    status_code=422, detail="修改整个系列的开始日期请使用重复规则设置"
+                    status_code=422, detail="修改整个系列的日期范围请使用重复规则设置"
                 )
             allowed = {
                 key: value
                 for key, value in fields.items()
-                if key in {"title", "notes", "category", "priority", "important", "urgent_override", "due_time"}
+                if key in {"title", "notes", "category", "priority", "important", "urgent_override", "start_time", "due_time"}
             }
             if not allowed:
-                if subtasks is not None:
-                    _replace_series_subtasks(conn, int(before["series_id"]), subtasks)
-                    audit(conn, actor, "todo_series", before["series_id"], "update_subtasks", None, {"subtasks": subtasks})
                 after = conn.execute("SELECT * FROM todos WHERE id=?", (todo_id,)).fetchone()
                 return _todo_payload(conn, after)
-            if subtasks is not None:
-                _replace_series_subtasks(conn, int(before["series_id"]), subtasks)
             allowed["updated_at"] = utc_now()
             series_assignments = ",".join(f"{column}=?" for column in allowed)
             conn.execute(
@@ -606,9 +517,11 @@ def update_todo(
                 "UPDATE todos SET title=(SELECT title FROM todo_series WHERE id=?),notes=(SELECT notes FROM todo_series WHERE id=?),"
                 "category=(SELECT category FROM todo_series WHERE id=?),priority=(SELECT priority FROM todo_series WHERE id=?),"
                 "important=(SELECT important FROM todo_series WHERE id=?),urgent_override=(SELECT urgent_override FROM todo_series WHERE id=?),"
+                "start_time=(SELECT start_time FROM todo_series WHERE id=?),"
                 "due_time=(SELECT due_time FROM todo_series WHERE id=?),updated_at=? WHERE series_id=? AND status='open' "
                 "AND deleted_at IS NULL AND recurrence_override=0 AND due_date>=?",
                 (
+                    before["series_id"],
                     before["series_id"],
                     before["series_id"],
                     before["series_id"],
@@ -621,7 +534,7 @@ def update_todo(
                     _now_local().date().isoformat(),
                 ),
             )
-            if any(key in allowed for key in ("title", "due_time")):
+            if any(key in allowed for key in ("title", "start_time", "due_time")):
                 conn.execute(
                     "UPDATE reminders SET status='cancelled',last_error='series_updated' "
                     "WHERE source_type='todo_series' AND source_key LIKE ? AND status='pending'",
@@ -632,6 +545,8 @@ def update_todo(
             audit(conn, actor, "todo_series", before["series_id"], "update", None, allowed)
             audit(conn, actor, "todo", todo_id, "update_series", before, dict(after))
             return _todo_payload(conn, after)
+        if not fields and not reminders_supplied:
+            raise HTTPException(status_code=422, detail="没有提供要修改的任务内容")
         fields["updated_at"] = utc_now()
         assignments = ",".join(f"{column}=?" for column in fields)
         conn.execute(
@@ -640,20 +555,12 @@ def update_todo(
         )
         if before.get("series_id") and scope == "occurrence":
             conn.execute("UPDATE todos SET recurrence_override=1 WHERE id=?", (todo_id,))
-            if any(key in fields for key in ("title", "due_date", "due_time")):
+            if any(key in fields for key in ("title", "start_date", "start_time", "due_date", "due_time")):
                 conn.execute(
                     "UPDATE reminders SET status='cancelled',last_error='occurrence_updated' "
                     "WHERE todo_id=? AND source_type='todo_series' AND status='pending'",
                     (todo_id,),
                 )
-        if subtasks is not None:
-            if before.get("series_id") and scope == "occurrence":
-                conn.execute("UPDATE todos SET recurrence_override=1 WHERE id=?", (todo_id,))
-                conn.execute(
-                    "UPDATE todos SET series_subtask_id=NULL WHERE parent_id=? AND deleted_at IS NULL",
-                    (todo_id,),
-                )
-            _replace_todo_subtasks(conn, todo_id, subtasks, actor)
         if reminders_supplied:
             _cancel_unsent_reminders(conn, todo_id, actor, "replace_todo_reminders")
             current_title = fields.get("title", before["title"])
@@ -675,14 +582,6 @@ def complete_todo(todo_id: int, actor: str = Depends(request_actor)) -> dict[str
         if not before_row:
             raise HTTPException(status_code=404, detail="找不到该任务")
         before = dict(before_row)
-        open_children = conn.execute(
-            "SELECT COUNT(*) FROM todos WHERE parent_id=? AND status='open' AND deleted_at IS NULL",
-            (todo_id,),
-        ).fetchone()[0]
-        if open_children:
-            raise HTTPException(
-                status_code=409, detail=f"还有 {open_children} 个未完成子任务，完成后才能完成父任务"
-            )
         now = utc_now()
         conn.execute(
             "UPDATE todos SET status='completed',completed_at=?,updated_at=? WHERE id=?",
@@ -738,28 +637,6 @@ def delete_todo(
             (now, now, todo_id),
         )
         _cancel_unsent_reminders(conn, todo_id, actor, "cancel_after_todo_delete")
-        if before.get("parent_id") is None:
-            child_rows = conn.execute(
-                "SELECT * FROM todos WHERE parent_id=? AND deleted_at IS NULL", (todo_id,)
-            ).fetchall()
-            for child in child_rows:
-                child_before = dict(child)
-                conn.execute(
-                    "UPDATE todos SET deleted_at=?,updated_at=?,recurrence_override=1 WHERE id=?",
-                    (now, now, child["id"]),
-                )
-                _cancel_unsent_reminders(
-                    conn, int(child["id"]), actor, "cancel_after_parent_delete"
-                )
-                audit(
-                    conn,
-                    actor,
-                    "todo",
-                    child["id"],
-                    "delete_with_parent",
-                    child_before,
-                    {"deleted_at": now},
-                )
         audit(
             conn,
             actor,

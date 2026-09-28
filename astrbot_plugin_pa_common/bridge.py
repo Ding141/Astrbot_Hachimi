@@ -52,7 +52,7 @@ class AssistantBridge:
 
 def _date_label(value: str | None) -> str:
     if not value:
-        return "未设置截止日期"
+        return "未设置日期"
     try:
         day = date.fromisoformat(value[:10])
         return f"{day.month}月{day.day}日"
@@ -63,11 +63,12 @@ def _date_label(value: str | None) -> str:
 def _todo_line(item: dict) -> str:
     identifier = f"#{item['id']} " if item.get("id") else ""
     bits = [identifier + item.get("title", "未命名任务")]
-    due = _date_label(item.get("due_date"))
-    if item.get("due_time"):
-        due += f" {item['due_time']}"
-    if item.get("due_date"):
-        bits.append(f"截止：{due}")
+    start_date, start_time = item.get("start_date"), item.get("start_time")
+    end_date, end_time = item.get("end_date") or item.get("due_date"), item.get("end_time") or item.get("due_time")
+    if start_date or start_time or end_date or end_time:
+        start = _date_label(start_date) + (f" {start_time}" if start_time else "") if start_date else "未设置开始时间"
+        end = _date_label(end_date) + (f" {end_time}" if end_time else "") if end_date else "未设置结束时间"
+        bits.append(f"时间：{start} 至 {end}")
     if item.get("category"):
         bits.append(f"分类：{item['category']}")
     if item.get("status") == "completed":
@@ -99,11 +100,6 @@ def render_todo(operation: str, result: dict) -> str:
         lines = [f"这份清单里有 {len(items)} 项待办，来看看吧 📝"]
         for item in items[:20]:
             lines.append(f"• {_todo_line(item)}")
-            for child in item.get("children", []):
-                marker = "✓" if child.get("status") == "completed" else "○"
-                lines.append(f"  {marker} #{child['id']} {child['title']}")
-            if item.get("child_count"):
-                lines.append(f"  子任务进度：{item['child_done']}/{item['child_count']}")
         if len(items) > 20:
             lines.append(f"另有 {len(items) - 20} 项未显示。")
         return "\n".join(lines)
@@ -131,8 +127,9 @@ def render_todo(operation: str, result: dict) -> str:
         else:
             repeat = "每周" + "、".join(days.get(day, "") for day in result.get("weekdays", []))
         reminders = "、".join(result.get("reminder_times", [])) or "未设置"
+        period = " 至 ".join(value for value in (result.get("start_time"), result.get("end_time") or result.get("due_time")) if value) or "未设置"
         ending = f"；停止日期 {result.get('end_date')}" if result.get("end_date") else "；⚠ 这是一组旧的无限重复任务"
-        return f"重复任务系列 #{result['id']}「{result.get('title', '')}」已更新：{repeat}{ending}；提醒时刻：{reminders}。✨"
+        return f"重复任务系列 #{result['id']}「{result.get('title', '')}」已更新：{repeat}{ending}；每期时间：{period}；提醒时刻：{reminders}。✨"
     if result.get("deleted"):
         if result.get("future_occurrences_cancelled"):
             return "已取消这个重复任务系列的未来周期，已完成历史保留。"
@@ -246,7 +243,7 @@ def render_reminder(operation: str, result: dict) -> str:
             lines.extend(f"• {item['title']}" for item in result["completed"][:8])
         if result.get("unfinished"):
             lines.append("\n本周未完成：")
-            lines.extend(f"• {item['title']}（截止 {item.get('due_date') or '未设日期'}）" for item in result["unfinished"][:8])
+            lines.extend(f"• {_todo_line(item)}" for item in result["unfinished"][:8])
         for day in result.get("next_week", []):
             items = [*day.get("courses", []), *day.get("events", [])]
             if items:

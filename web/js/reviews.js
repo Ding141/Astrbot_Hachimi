@@ -18,7 +18,7 @@ function renderReview(result) {
   const nextCourses = next.reduce((sum, day) => sum + day.courses.length, 0);
   const nextEvents = next.reduce((sum, day) => sum + day.events.length, 0);
   const completedHtml = completed.length ? completed.slice(0, 8).map((item) => `<li>${escapeHtml(item.title)}</li>`).join("") : "<li>暂无</li>";
-  const unfinishedHtml = unfinished.length ? unfinished.slice(0, 8).map((item) => `<li>${escapeHtml(item.title)} · ${escapeHtml(item.due_date || "无截止日期")}</li>`).join("") : "<li>暂无</li>";
+  const unfinishedHtml = unfinished.length ? unfinished.slice(0, 8).map((item) => `<li>${escapeHtml(item.title)} · ${escapeHtml(item.start_date || item.due_date || "未设置时间")}${item.start_time ? ` ${escapeHtml(item.start_time)}` : ""} 至 ${escapeHtml(item.due_date || "未设置结束日期")}${item.due_time ? ` ${escapeHtml(item.due_time)}` : ""}</li>`).join("") : "<li>暂无</li>";
   $("#weekly-review-overview").innerHTML = `<strong>${escapeHtml(result.week_start)} 至 ${escapeHtml(result.week_end)}</strong><p>完成 ${completed.length} 项，未完成 ${unfinished.length} 项；下周已有 ${nextCourses} 门课和 ${nextEvents} 项个人安排。</p><div class="review-columns"><div><b>本周完成</b><ul>${completedHtml}</ul></div><div><b>本周未完成</b><ul>${unfinishedHtml}</ul></div></div>`;
   const nextMonday = new Date(`${result.week_start}T12:00:00`);
   nextMonday.setDate(nextMonday.getDate() + 7);
@@ -54,7 +54,7 @@ async function addWeeklyTodo(event) {
   const dueDate = $("#weekly-plan-todo-date").value;
   if (!title) return;
   try {
-    await api("/api/v1/todos", { method: "POST", body: JSON.stringify({ title, due_date: dueDate || null }) });
+    await api("/api/v1/todos", { method: "POST", body: JSON.stringify({ title, end_date: dueDate || null }) });
     $("#weekly-plan-todo-form").reset();
     toast("下周 Todo 已添加");
     await Promise.all([loadWeeklyReview(), loadTodos()]);

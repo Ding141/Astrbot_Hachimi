@@ -1,1 +1,1 @@
-export const appState = { settings: null, courses: [], selectedFile: null, previewCourses: [], editingTodo: null, scheduleAnchor: "", reviewData: null, todos: [] };
+export const appState = { settings: null, courses: [], selectedCourse: null, selectedFile: null, previewCourses: [], editingTodo: null, scheduleAnchor: "", reviewData: null, todos: [] };

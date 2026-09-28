@@ -246,6 +246,20 @@ body.drawer-open { overflow: hidden; }
 .schedule-controls input { width: 137px; }
 .schedule-controls select { min-width: 82px; }
 .course-dayline { margin-bottom: 4px; font-size: 11px; }
+.schedule-workspace { min-width: 0; }
+.schedule-workspace.has-selected-course { display: grid; grid-template-columns: minmax(220px, 270px) minmax(0, 1fr); align-items: start; gap: 13px; }
+.schedule-course-details { position: sticky; top: 14px; padding: 16px; border: 1px solid #e7e4f5; border-radius: 13px; background: linear-gradient(155deg, #fbfaff, #fff); box-shadow: 0 8px 24px #302b4b0b; }
+.selected-course-heading { display: flex; justify-content: space-between; align-items: start; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid #eceaf4; }
+.selected-course-heading .eyebrow { display: block; margin-bottom: 4px; color: #8e88b7; font-size: 10px; }
+.selected-course-heading h3 { margin: 0; color: #393750; font-size: 16px; line-height: 1.4; }
+.selected-course-close { width: 29px; height: 29px; border: 1px solid #e5e3ef; border-radius: 9px; background: #fff; color: #77758b; font-size: 19px; line-height: 1; }
+.selected-course-facts { display: grid; gap: 10px; margin: 14px 0; }
+.selected-course-facts div { display: grid; grid-template-columns: 64px 1fr; gap: 8px; }
+.selected-course-facts dt { color: #8e8fa0; font-size: 11px; }
+.selected-course-facts dd { margin: 0; color: #4a4a61; font-size: 12px; overflow-wrap: anywhere; }
+.selected-course-actions { display: grid; gap: 7px; }
+.selected-course-actions button { justify-content: center; padding: 9px 10px; font-size: 11px; }
+.schedule-workspace.has-selected-course .schedule-grid { min-width: 0; }
 .schedule-grid { --period-axis: 76px; display: block; overflow-x: auto; overflow-y: hidden; padding: 2px 0 10px; scrollbar-color: #d1cee8 #f4f3fa; }
 .timetable-head, .timetable-body { display: grid; grid-template-columns: var(--period-axis) repeat(var(--day-count), minmax(132px, 1fr)); min-width: 1000px; }
 .timetable-head { position: sticky; top: 0; z-index: 3; background: #fff; border-bottom: 1px solid #e8e7ef; }
@@ -268,6 +282,10 @@ body.drawer-open { overflow: hidden; }
 .time-slot:hover span, .time-slot:focus-visible span { opacity: 1; }
 .time-slot.session-break { border-top: 6px solid #f4f3fa; }
 .timetable-entry { position: relative; z-index: 2; min-width: 0; min-height: 0; margin: 3px; padding: 6px 7px; border: 1px solid #dcd9ff; border-left: 3px solid #766be0; border-radius: 9px; overflow: auto; background: linear-gradient(145deg, #f4f2ff, #fbfaff); box-shadow: 0 2px 5px #3c347b0d; }
+.course-entry { cursor: pointer; text-align: left; color: inherit; font: inherit; transition: border-color .15s, box-shadow .15s, transform .15s; }
+.course-entry:hover, .course-entry:focus-visible { z-index: 3; border-color: #a7a0f2; box-shadow: 0 5px 14px #5148a321; outline: none; }
+.course-entry.is-selected { border-color: #8379e5; border-left-color: #655bd0; background: linear-gradient(145deg, #eae8ff, #f9f8ff); box-shadow: 0 4px 13px #5148a32c; }
+.course-entry.is-cancelled { border-color: #e8dada; border-left-color: #b9a3a3; background: linear-gradient(145deg, #f7f3f3, #fdfbfb); color: #888; }
 .timetable-entry strong { display: block; margin: 3px 0 2px; color: #393750; font-size: 10px; line-height: 1.4; overflow-wrap: anywhere; }
 .timetable-entry small { display: block; color: #78778d; font-size: 8px; line-height: 1.45; overflow-wrap: anywhere; }
 .entry-time { color: #6961b6; font-size: 8px; font-weight: 700; line-height: 1.3; font-variant-numeric: tabular-nums; }
@@ -290,6 +308,8 @@ body.drawer-open { overflow: hidden; }
   .editor-drawer { width: min(460px, 100vw); padding-top: 18px; }
   .timetable-panel { padding: 14px; }
   .timetable-panel > .panel-heading { align-items: start; }
+  .schedule-workspace.has-selected-course { grid-template-columns: minmax(0, 1fr); }
+  .schedule-course-details { position: static; }
   .schedule-controls { justify-content: start; }
   .schedule-grid:not(.day-mode) .timetable-head, .schedule-grid:not(.day-mode) .timetable-body { min-width: 930px; grid-template-columns: var(--period-axis) repeat(var(--day-count), minmax(122px, 1fr)); }
   .period-axis, .timetable-day-track { grid-template-rows: repeat(14, 62px); }

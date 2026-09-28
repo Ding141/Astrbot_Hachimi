@@ -8,7 +8,7 @@ from typing import Any, Iterator
 
 from personal_assistant.config import BACKUP_DIR, DATABASE_PATH
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def utc_now() -> str:
@@ -350,6 +350,27 @@ def initialize_database() -> None:
                 )"""
             )
             conn.execute("PRAGMA user_version = 4")
+        if current < 5:
+            if not conn.in_transaction:
+                conn.execute("BEGIN IMMEDIATE")
+            conn.execute("ALTER TABLE todos ADD COLUMN start_date TEXT")
+            conn.execute("ALTER TABLE todos ADD COLUMN start_time TEXT")
+            conn.execute("ALTER TABLE todo_series ADD COLUMN start_time TEXT")
+
+            # Subtasks are no longer part of the task model. Keep the historical
+            # rows recoverable in the migration backup, but remove them from the
+            # active task list and detach them from their former parents.
+            now = utc_now()
+            conn.execute(
+                "UPDATE todos SET deleted_at=COALESCE(deleted_at,?),parent_id=NULL,series_subtask_id=NULL "
+                "WHERE parent_id IS NOT NULL OR series_subtask_id IS NOT NULL",
+                (now,),
+            )
+            conn.execute(
+                "UPDATE todo_series_subtasks SET deleted_at=COALESCE(deleted_at,?) WHERE deleted_at IS NULL",
+                (now,),
+            )
+            conn.execute("PRAGMA user_version = 5")
         conn.execute(
             "UPDATE reminders SET status='uncertain', last_error='Service restarted while delivery was in progress; check before retrying.' WHERE status='sending'"
         )

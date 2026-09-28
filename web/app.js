@@ -89,6 +89,7 @@ $("#schedule-event-frequency").addEventListener("change", () => {
 $("#todo-repeat-frequency").addEventListener("change", () => {
   const repeated = $("#todo-repeat-frequency").value !== "none";
   $("#todo-repeat-options").hidden = !repeated;
+  $("#todo-single-time-fields").hidden = repeated;
   $("#todo-repeat-weekdays").hidden = $("#todo-repeat-frequency").value !== "weekly";
   $("#todo-repeat-month-day-wrap").hidden = $("#todo-repeat-frequency").value !== "monthly";
 });

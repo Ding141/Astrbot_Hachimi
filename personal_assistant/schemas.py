@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, time
+from datetime import date, datetime, time
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -21,11 +21,39 @@ class TodoCreate(BaseModel):
     priority: int = Field(default=3, ge=1, le=5)
     important: bool | None = None
     urgent: bool | None = None
-    due_date: date | None = None
-    due_time: time | None = None
+    start_date: date | None = None
+    start_time: time | None = None
+    end_date: date | None = None
+    end_time: time | None = None
     reminders: list[ReminderInput] = Field(default_factory=list, max_length=10)
-    parent_id: int | None = None
-    subtasks: list[str] = Field(default_factory=list, max_length=30)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_due_fields(cls, value):
+        if isinstance(value, dict):
+            value = dict(value)
+            value.setdefault("end_date", value.get("due_date"))
+            value.setdefault("end_time", value.get("due_time"))
+        return value
+
+    @model_validator(mode="after")
+    def validate_task_times(self) -> "TodoCreate":
+        if self.start_time and not self.start_date:
+            raise ValueError("设置开始时刻时也需要提供开始日期")
+        if self.end_time and not self.end_date:
+            raise ValueError("设置结束时刻时也需要提供结束日期")
+        if self.start_date and self.end_date:
+            if self.end_date < self.start_date:
+                raise ValueError("结束时间不能早于开始时间")
+            if (
+                self.end_date == self.start_date
+                and self.start_time
+                and self.end_time
+                and datetime.combine(self.end_date, self.end_time)
+                < datetime.combine(self.start_date, self.start_time)
+            ):
+                raise ValueError("结束时间不能早于开始时间")
+        return self
 
 
 class TodoPatch(BaseModel):
@@ -35,14 +63,34 @@ class TodoPatch(BaseModel):
     priority: int | None = Field(default=None, ge=1, le=5)
     important: bool | None = None
     urgent: bool | None = None
-    due_date: date | None = None
-    due_time: time | None = None
+    start_date: date | None = None
+    start_time: time | None = None
+    end_date: date | None = None
+    end_time: time | None = None
+    clear_start_date: bool = False
+    clear_start_time: bool = False
+    clear_end_date: bool = False
+    clear_end_time: bool = False
     clear_due_date: bool = False
     clear_due_time: bool = False
     clear_notes: bool = False
     clear_category: bool = False
     reminders: list[ReminderInput] | None = Field(default=None, max_length=10)
-    subtasks: list[str] | None = Field(default=None, max_length=30)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_due_fields(cls, value):
+        if isinstance(value, dict):
+            value = dict(value)
+            if "due_date" in value and "end_date" not in value:
+                value["end_date"] = value["due_date"]
+            if "due_time" in value and "end_time" not in value:
+                value["end_time"] = value["due_time"]
+            if "clear_due_date" in value and "clear_end_date" not in value:
+                value["clear_end_date"] = value["clear_due_date"]
+            if "clear_due_time" in value and "clear_end_time" not in value:
+                value["clear_end_time"] = value["clear_due_time"]
+        return value
 
 
 class TodoSeriesCreate(BaseModel):
@@ -55,12 +103,21 @@ class TodoSeriesCreate(BaseModel):
     start_date: date
     end_date: date
     month_day: int | None = Field(default=None, ge=1, le=31)
-    due_time: time | None = None
+    start_time: time | None = None
+    end_time: time | None = None
     important: bool | None = None
     urgent: bool | None = None
     reminder_enabled: bool = True
     reminder_times: list[time] = Field(default_factory=list, max_length=10)
-    subtasks: list[str] = Field(default_factory=list, max_length=30)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_due_time(cls, value):
+        if isinstance(value, dict):
+            value = dict(value)
+            if "due_time" in value and "end_time" not in value:
+                value["end_time"] = value["due_time"]
+        return value
 
     @model_validator(mode="after")
     def validate_recurrence(self) -> "TodoSeriesCreate":
@@ -76,6 +133,8 @@ class TodoSeriesCreate(BaseModel):
             raise ValueError("只有每月重复需要指定日期")
         if self.end_date < self.start_date:
             raise ValueError("重复结束日期不能早于开始日期")
+        if self.start_time and self.end_time and self.end_time <= self.start_time:
+            raise ValueError("每期结束时刻必须晚于开始时刻")
         return self
 
 
@@ -89,12 +148,21 @@ class TodoSeriesPatch(BaseModel):
     start_date: date | None = None
     end_date: date | None = None
     month_day: int | None = Field(default=None, ge=1, le=31)
-    due_time: time | None = None
+    start_time: time | None = None
+    end_time: time | None = None
     important: bool | None = None
     urgent: bool | None = None
     reminder_enabled: bool | None = None
     reminder_times: list[time] | None = Field(default=None, max_length=10)
-    subtasks: list[str] | None = Field(default=None, max_length=30)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_due_time(cls, value):
+        if isinstance(value, dict):
+            value = dict(value)
+            if "due_time" in value and "end_time" not in value:
+                value["end_time"] = value["due_time"]
+        return value
 
     @model_validator(mode="after")
     def validate_recurrence_patch(self) -> "TodoSeriesPatch":
@@ -112,6 +180,8 @@ class TodoSeriesPatch(BaseModel):
             raise ValueError("每日或每周重复不需要指定每月日期")
         if self.start_date and self.end_date and self.end_date < self.start_date:
             raise ValueError("重复结束日期不能早于开始日期")
+        if self.start_time and self.end_time and self.end_time <= self.start_time:
+            raise ValueError("每期结束时刻必须晚于开始时刻")
         return self
 
 

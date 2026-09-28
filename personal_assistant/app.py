@@ -56,7 +56,7 @@ async def lifespan(_: FastAPI):
 
 
 def create_app() -> FastAPI:
-    application = FastAPI(title="个人 AI 助手", version="0.5.0", lifespan=lifespan)
+    application = FastAPI(title="个人 AI 助手", version="0.6.0", lifespan=lifespan)
     for router in (
         system.router,
         todos.router,

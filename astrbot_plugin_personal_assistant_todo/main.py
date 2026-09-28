@@ -22,25 +22,26 @@ class PersonalAssistantTodoPlugin(Star):
 
     @filter.llm_tool(name="todo_create")
     async def todo_create(
-        self, event: AstrMessageEvent, title: str, due_date: str = "", due_time: str = "",
+        self, event: AstrMessageEvent, title: str, start_date: str = "", start_time: str = "",
+        end_date: str = "", end_time: str = "",
         category: str = "", priority: int = 3, notes: str = "", reminders: list[str] | None = None,
-        parent_id: int = 0, repeat_frequency: str = "none", repeat_weekdays: list[int] | None = None,
+        repeat_frequency: str = "none", repeat_weekdays: list[int] | None = None,
         repeat_start_date: str = "", repeat_end_date: str = "", reminder_times: list[str] | None = None,
         reminder_enabled: bool = True,
         repeat_month_day: int = 0, important: bool | None = None, urgent: bool | None = None,
-        subtasks: list[str] | None = None,
     ):
-        """创建 Todo、子任务或重复任务。只按用户明确说出的日期/时间填写。
+        """创建一项待办。支持开始与结束时间、单次或多次提醒，以及每日/每周/每月重复。
 
         Args:
             title(string): 任务标题
-            due_date(string): 单次截止日期 YYYY-MM-DD；重复任务可用作开始日期
-            due_time(string): 截止时刻 HH:MM；只给日期时留空
+            start_date(string): 单次任务开始日期 YYYY-MM-DD
+            start_time(string): 单次任务或重复任务每一期的开始时刻 HH:MM
+            end_date(string): 单次任务结束日期 YYYY-MM-DD
+            end_time(string): 单次任务或重复任务每一期的结束时刻 HH:MM
             category(string): 分类
             priority(number): 1到5，默认3
             notes(string): 备注
             reminders(array[string]): 单次任务的提醒日期时间，ISO 8601格式
-            parent_id(number): 子任务的父任务编号；普通任务传0
             repeat_frequency(string): none、daily、weekly或monthly
             repeat_weekdays(array[number]): 每周重复的星期，周一为1、周日为7
             repeat_start_date(string): 重复开始日期 YYYY-MM-DD；未说明时先询问
@@ -49,8 +50,7 @@ class PersonalAssistantTodoPlugin(Star):
             reminder_times(array[string]): 每个重复日期的提醒时刻，例如["08:00","20:00"]
             reminder_enabled(boolean): 重复任务提醒开关
             important(boolean): 是否重要；重要且紧急/重要但不紧急/不重要但紧急/都不紧急按用户语义设置
-            urgent(boolean): 是否紧急；未明确时省略，系统按截止日期判断
-            subtasks(array[string]): 随任务一起创建的子任务名称
+            urgent(boolean): 是否紧急；未明确时省略，系统按结束日期判断
         """
         repeat = repeat_frequency.lower().strip()
         if repeat not in {"none", "daily", "weekly", "monthly"}:
@@ -67,7 +67,15 @@ class PersonalAssistantTodoPlugin(Star):
             if not repeat_start_date:
                 yield event.plain_result("请先确认这组任务从哪一天开始。")
                 return
-            start = date.fromisoformat(repeat_start_date)
+            try:
+                start = date.fromisoformat(repeat_start_date)
+                stop = date.fromisoformat(repeat_end_date)
+            except ValueError:
+                yield event.plain_result("重复任务的开始和停止日期请使用 YYYY-MM-DD 格式。")
+                return
+            if stop < start:
+                yield event.plain_result("重复任务的停止日期不能早于开始日期。")
+                return
             if repeat == "weekly":
                 if not days:
                     yield event.plain_result("每周重复需要先确认星期几。")
@@ -76,8 +84,9 @@ class PersonalAssistantTodoPlugin(Star):
                 "title": title, "notes": notes, "category": category, "priority": priority,
                 "frequency": repeat, "weekdays": days if repeat == "weekly" else [],
                 "start_date": start.isoformat(), "end_date": repeat_end_date,
-                "due_time": due_time or None, "reminder_enabled": bool(reminder_enabled and reminder_times),
-                "reminder_times": reminder_times or [], "subtasks": subtasks or [],
+                "start_time": start_time or None, "end_time": end_time or None,
+                "reminder_enabled": bool(reminder_enabled and reminder_times),
+                "reminder_times": reminder_times or [],
             }
             if repeat == "monthly":
                 payload["month_day"] = repeat_month_day
@@ -91,24 +100,20 @@ class PersonalAssistantTodoPlugin(Star):
         payload = {
             "title": title, "notes": notes, "category": category, "priority": priority,
             "reminders": [{"remind_at": item} for item in (reminders or [])],
-            "subtasks": subtasks or [],
         }
         if important is not None:
             payload["important"] = important
         if urgent is not None:
             payload["urgent"] = urgent
-        if due_date:
-            payload["due_date"] = due_date
-        if due_time:
-            payload["due_time"] = due_time
-        if parent_id:
-            payload["parent_id"] = parent_id
+        for key, value in (("start_date", start_date), ("start_time", start_time), ("end_date", end_date), ("end_time", end_time)):
+            if value:
+                payload[key] = value
         result = await self.bridge.request(event, "POST", "/api/v1/todos", payload)
         yield event.plain_result(render_todo("create", result))
 
     @filter.llm_tool(name="todo_list")
     async def todo_list(self, event: AstrMessageEvent, query: str = "", status: str = "open", due: str = ""):
-        """按关键词、状态或日期查看 Todo 和子任务。
+        """按关键词、状态或日期查看待办。
 
         Args:
             query(string): 标题、备注或分类关键词
@@ -122,34 +127,40 @@ class PersonalAssistantTodoPlugin(Star):
 
     @filter.llm_tool(name="todo_update")
     async def todo_update(
-        self, event: AstrMessageEvent, todo_id: int, title: str = "", due_date: str = "",
-        due_time: str = "", category: str = "", priority: int = 0, notes: str = "",
-        scope: str = "", clear_due_date: bool = False, clear_due_time: bool = False,
+        self, event: AstrMessageEvent, todo_id: int, title: str = "", start_date: str = "",
+        start_time: str = "", end_date: str = "", end_time: str = "",
+        category: str = "", priority: int = 0, notes: str = "",
+        scope: str = "", clear_start_date: bool = False, clear_start_time: bool = False,
+        clear_end_date: bool = False, clear_end_time: bool = False,
         clear_notes: bool = False, clear_category: bool = False, reminders: list[str] | None = None,
-        important: bool | None = None, urgent: bool | None = None, subtasks: list[str] | None = None,
+        important: bool | None = None, urgent: bool | None = None,
     ):
         """修改 Todo。重复任务必须先确认只修改本期还是整个系列。
 
         Args:
             todo_id(number): 已查询并确认的任务编号
             title(string): 新标题；不修改时留空
-            due_date(string): 新日期 YYYY-MM-DD
-            due_time(string): 新时刻 HH:MM
+            start_date(string): 开始日期 YYYY-MM-DD
+            start_time(string): 开始时刻 HH:MM
+            end_date(string): 结束日期 YYYY-MM-DD
+            end_time(string): 结束时刻 HH:MM
             category(string): 新分类
             priority(number): 新优先级；不修改时传0
             notes(string): 新备注
             scope(string): 重复任务传 occurrence 或 series；目标不明确时先追问
-            clear_due_date(boolean): 清除截止日期和时刻
-            clear_due_time(boolean): 只清除截止时刻
+            clear_start_date(boolean): 清除开始日期和时刻
+            clear_start_time(boolean): 只清除开始时刻
+            clear_end_date(boolean): 清除结束日期和时刻
+            clear_end_time(boolean): 只清除结束时刻
             clear_notes(boolean): 清空备注
             clear_category(boolean): 清空分类
             reminders(array[string]): 替换本任务的多个完整日期时间提醒；空数组表示清除
             important(boolean): 是否重要
-            urgent(boolean): 是否紧急；省略时按截止日期自动判断
-            subtasks(array[string]): 替换该任务的子任务清单；重复任务整组编辑时作为每期模板
+            urgent(boolean): 是否紧急；省略时按结束日期自动判断
         """
         payload = {}
-        for key, value in (("title", title), ("due_date", due_date), ("due_time", due_time), ("category", category), ("notes", notes)):
+        for key, value in (("title", title), ("start_date", start_date), ("start_time", start_time),
+                           ("end_date", end_date), ("end_time", end_time), ("category", category), ("notes", notes)):
             if value:
                 payload[key] = value
         if priority:
@@ -158,9 +169,9 @@ class PersonalAssistantTodoPlugin(Star):
             payload["important"] = important
         if urgent is not None:
             payload["urgent"] = urgent
-        if subtasks is not None:
-            payload["subtasks"] = subtasks
-        for key, value in (("clear_due_date", clear_due_date), ("clear_due_time", clear_due_time), ("clear_notes", clear_notes), ("clear_category", clear_category)):
+        for key, value in (("clear_start_date", clear_start_date), ("clear_start_time", clear_start_time),
+                           ("clear_end_date", clear_end_date), ("clear_end_time", clear_end_time),
+                           ("clear_notes", clear_notes), ("clear_category", clear_category)):
             if value:
                 payload[key] = True
         if reminders is not None:
@@ -171,7 +182,7 @@ class PersonalAssistantTodoPlugin(Star):
 
     @filter.llm_tool(name="todo_complete")
     async def todo_complete(self, event: AstrMessageEvent, todo_id: int):
-        """完成一项已确认的 Todo。含未完成子任务的父任务不能完成。
+        """完成一项已确认的待办。
 
         Args:
             todo_id(number): 已确认的任务编号
@@ -208,10 +219,10 @@ class PersonalAssistantTodoPlugin(Star):
         self, event: AstrMessageEvent, series_id: int, title: str = "", notes: str = "",
         category: str = "", priority: int = 0, frequency: str = "",
         weekdays: list[int] | None = None, start_date: str = "", end_date: str = "",
-        due_time: str = "", clear_due_time: bool = False,
+        start_time: str = "", end_time: str = "", clear_start_time: bool = False,
+        clear_end_time: bool = False,
         reminder_enabled: bool | None = None, reminder_times: list[str] | None = None,
         month_day: int = 0, important: bool | None = None, urgent: bool | None = None,
-        subtasks: list[str] | None = None,
     ):
         """修改一个重复任务系列；整组变更前先确认用户确实想调整所有后续周期。
 
@@ -226,17 +237,38 @@ class PersonalAssistantTodoPlugin(Star):
             weekdays(array[number]): 新的重复星期，周一为1、周日为7
             start_date(string): 新开始日期 YYYY-MM-DD
             end_date(string): 设置停止日期 YYYY-MM-DD；修改周期规则时必须提供
-            due_time(string): 每期截止时刻 HH:MM
-            clear_due_time(boolean): 清除每期截止时刻
+            start_time(string): 每期开始时刻 HH:MM
+            end_time(string): 每期结束时刻 HH:MM
+            clear_start_time(boolean): 清除每期开始时刻
+            clear_end_time(boolean): 清除每期结束时刻
             reminder_enabled(boolean): 整组提醒开关
             reminder_times(array[string]): 每期多个提醒时刻，例如["08:00","20:00"]
             important(boolean): 是否重要
             urgent(boolean): 是否紧急
-            subtasks(array[string]): 设置此系列每期复用的子任务模板
         """
         payload = {}
+        normalized_frequency = frequency.strip().lower()
+        if normalized_frequency and normalized_frequency not in {"daily", "weekly", "monthly"}:
+            yield event.plain_result("重复周期可选每日、每周或每月。")
+            return
+        recurrence_fields_supplied = bool(normalized_frequency or start_date or month_day or weekdays is not None)
+        if recurrence_fields_supplied and not end_date:
+            yield event.plain_result("修改重复规则前需要确认新的停止日期。")
+            return
+        if normalized_frequency == "weekly" and not weekdays:
+            yield event.plain_result("修改为每周重复时，请提供星期几（周一为1，周日为7）。")
+            return
+        if normalized_frequency == "monthly" and not (1 <= month_day <= 31):
+            yield event.plain_result("修改为每月重复时，请提供每月日期1到31。")
+            return
+        if normalized_frequency in {"daily", "monthly"} and weekdays:
+            yield event.plain_result("每日或每月重复不能同时指定星期。")
+            return
+        if normalized_frequency in {"daily", "weekly"} and month_day:
+            yield event.plain_result("每日或每周重复不能同时指定每月日期。")
+            return
         for key, value in (("title", title), ("notes", notes), ("category", category),
-                           ("frequency", frequency), ("start_date", start_date)):
+                           ("frequency", normalized_frequency), ("start_date", start_date)):
             if value:
                 payload[key] = value
         if priority:
@@ -251,12 +283,14 @@ class PersonalAssistantTodoPlugin(Star):
             payload["end_date"] = end_date
         if month_day:
             payload["month_day"] = month_day
-        if subtasks is not None:
-            payload["subtasks"] = subtasks
-        if due_time:
-            payload["due_time"] = due_time
-        elif clear_due_time:
-            payload["due_time"] = None
+        if start_time:
+            payload["start_time"] = start_time
+        elif clear_start_time:
+            payload["start_time"] = None
+        if end_time:
+            payload["end_time"] = end_time
+        elif clear_end_time:
+            payload["end_time"] = None
         if reminder_enabled is not None:
             payload["reminder_enabled"] = reminder_enabled
         if reminder_times is not None:

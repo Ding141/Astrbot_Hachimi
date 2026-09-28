@@ -77,7 +77,7 @@ function localReminderInput(value) {
 }
 
 function localDate(value, time) {
-  return value ? `${value}${time ? ` ${time}` : ""}` : "无截止日期";
+  return value ? `${value}${time ? ` ${time}` : ""}` : "未设置时间";
 }
 
 function localToday() {

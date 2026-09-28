@@ -22,15 +22,15 @@ Authorized computers ── Tailscale Serve HTTPS ── server loopback :8080/:
 - `web/js/` 将状态与公共请求、Todo、提醒、复盘、课表和操作记录拆成原生 ES 模块；页面无需前端构建器。
 - 插件将 API 结构化结果渲染为中文文本后交给模型；课表文本包含日期、星期、教学周、课程节次、时间、地点和教师。
 - API 通过容器内网络调用 AstrBot OpenAPI 发送主动提醒。无 OpenAPI Key 时提醒保留为待发送，不发出外部请求。
-- SQLite 使用 WAL 和外键；schema 版本用 `PRAGMA user_version` 管理。旧 schema 升级前会在 `backups/` 中生成 SQLite 一致性快照；当前版本为 v4。
+- SQLite 使用 WAL 和外键；schema 版本用 `PRAGMA user_version` 管理。旧 schema 升级前会在 `backups/` 中生成 SQLite 一致性快照；当前版本为 v5。
 - Compose 项目名为 `personal-assistant-astrbot`，没有固定容器名，网络、服务名和数据卷/绑定目录均由本项目 Compose 管理。
 
 ## 核心数据
 
-- `todos`：任务文本、分类、旧版优先级、重要/紧急状态、日期/时刻级截止时间、状态、父子任务和软删除时间。
+- `todos`：任务文本、分类、旧版优先级、重要/紧急状态、开始与结束日期/时刻、状态和软删除时间。
 - `reminders`：任务关联、提醒时间、收件会话 UMO、发送状态、尝试次数和错误信息。
 - `terms` / `courses`：学期首周和结束日期、课程周几/节次/时间、周次范围、单双周、地点和教师。旧学期结束日期迁移时按第18周周日推算并标记；`course_exceptions` 保存单次课程调整或停课。
-- `todo_series`：每日/每周/每月重复规则和停止日期；每次发生会建立独立 Todo 记录，完成历史不会覆盖。`todo_series_subtasks` 是可复用模板，每期子任务独立保存。
+- `todo_series`：每日/每周/每月重复规则、停止日期和每期起止时刻；每次发生会建立独立 Todo 记录，完成历史不会覆盖。
 - `course_reminder_previews`：保存 15 分钟有效的课程提醒预览和课程版本，用于确认前检查目标是否已变化。
 - `schedule_events`：单次或每周个人安排；按节次映射校历时间，并提示与课程/其他安排的冲突。
 - `weekly_reviews`：每周复盘文字；下周 Todo 与安排分别保存到 Todo 和个人日程资源。
@@ -38,7 +38,7 @@ Authorized computers ── Tailscale Serve HTTPS ── server loopback :8080/:
 - `settings`：默认微信会话 UMO 等非凭据设置。
 - `audit_log`：关键变更前后的结构化记录。
 
-截止日期允许只有日期，不补时刻。重复任务每期保存独立记录，父任务必须等所有子任务完成后才能完成。提醒按 `Asia/Shanghai` 解释未附时区的时刻，并以 UTC 存储。发送超时或服务在发送中重启时记为 `uncertain`，不会自动重发；确定的网络连接失败最多自动重试三次。
+任务日期允许只填一端；用户只提供日期时不补时刻。重复任务每期保存独立记录。提醒按 `Asia/Shanghai` 解释未附时区的时刻，并以 UTC 存储。发送超时或服务在发送中重启时记为 `uncertain`，不会自动重发；确定的网络连接失败最多自动重试三次。
 
 统一服务端调度器生成重复 Todo 提醒、课前提醒、每日早报和周复盘提醒。默认早报为每日 08:00、周复盘为周日 20:00、课前提醒提前 10 分钟（按课程逐门启用）。所有待发送状态保存在 SQLite 中。
 

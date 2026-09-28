@@ -32,8 +32,8 @@ async function loadTodos() {
     const quadrant = quadrantLabel(item);
     return `<tr class="${item.status === "completed" ? "completed-row" : ""}">
       <td><input class="todo-select" type="checkbox" value="${item.id}" aria-label="选择任务 ${escapeHtml(item.title)}"></td>
-      <td><div class="task-title">${item.parent_id ? "↳ " : ""}${escapeHtml(item.title)}</div>${item.recurrence ? `<div class="subtle">${recurrenceLabel(item.recurrence)} · 本期${item.recurrence.end_date ? ` · 至 ${escapeHtml(item.recurrence.end_date)}` : " · ⚠ 旧重复任务未设置停止日期"}</div>` : ""}${item.child_count ? `<div class="subtle">子任务进度 ${item.child_done}/${item.child_count}${item.children.length ? ` · ${item.children.slice(0, 3).map((child) => `${child.status === "completed" ? "✓" : "○"}${escapeHtml(child.title)}`).join("、")}` : ""}</div>` : ""}${item.notes ? `<div class="subtle">${escapeHtml(item.notes)}</div>` : ""}</td>
-      <td>${escapeHtml(localDate(item.due_date, item.due_time))}</td>
+      <td><div class="task-title">${escapeHtml(item.title)}</div>${item.recurrence ? `<div class="subtle">${recurrenceLabel(item.recurrence)} · ${escapeHtml(item.recurrence.start_date)} 至 ${escapeHtml(item.recurrence.end_date || "未设结束")}</div>` : ""}${item.notes ? `<div class="subtle">${escapeHtml(item.notes)}</div>` : ""}</td>
+      <td>${escapeHtml(taskTimeLabel(item))}</td>
       <td>${item.category ? `<span class="tag ${categoryClass}">${escapeHtml(item.category)}</span>` : "—"}</td>
       <td><span class="quad-pill ${quadrant.css}">${quadrant.text}</span></td>
       <td>${reminderCount ? `<span class="reminder-count">◷ ${reminderCount}</span>` : "—"}</td>
@@ -67,6 +67,15 @@ function recurrenceLabel(recurrence) {
   return `每周${(recurrence.weekdays || []).map((day) => `周${"一二三四五六日"[day - 1]}`).join("、")}重复`;
 }
 
+function taskTimeLabel(item) {
+  const start = localDate(item.start_date, item.start_time);
+  const end = localDate(item.end_date, item.end_time);
+  if (start === "无截止日期" && end === "无截止日期") return "未安排时间";
+  if (start === "无截止日期") return `至 ${end}`;
+  if (end === "无截止日期") return `从 ${start}`;
+  return `${start} – ${end}`;
+}
+
 function localIso(day) { return day.toISOString().slice(0, 10); }
 function dateFromIso(value) { return new Date(`${value}T12:00:00Z`); }
 
@@ -98,8 +107,9 @@ function filterCalendarItems(items) {
   return items.filter((item) => {
     if (status !== "all" && item.status !== status) return false;
     if (q && !`${item.title} ${item.notes} ${item.category}`.toLocaleLowerCase().includes(q)) return false;
-    if (due === "today" && item.due_date !== today) return false;
-    if (due === "upcoming" && !(item.due_date > today && item.due_date <= upcomingIso)) return false;
+    const taskDate = item.end_date || item.start_date;
+    if (due === "today" && taskDate !== today) return false;
+    if (due === "upcoming" && !(taskDate > today && taskDate <= upcomingIso)) return false;
     if (due === "overdue") {
       const currentTime = new Date().toLocaleTimeString("en-GB", {
         timeZone: "Asia/Shanghai",
@@ -107,11 +117,12 @@ function filterCalendarItems(items) {
         minute: "2-digit",
         hour12: false,
       });
+      const deadlineTime = item.end_date ? item.end_time : item.start_time;
       const overdue = item.status === "open"
-        && item.due_date
+        && taskDate
         && (
-          item.due_date < today
-          || (item.due_date === today && item.due_time && item.due_time < currentTime)
+          taskDate < today
+          || (taskDate === today && deadlineTime && deadlineTime < currentTime)
         );
       if (!overdue) return false;
     }
@@ -124,7 +135,7 @@ function renderCalendarCard(item) {
   return `<article class="todo-calendar-card ${item.status === "completed" ? "completed" : ""} ${categoryCss(item.category)}">
     <button class="calendar-task-title" type="button" data-edit-todo="${item.id}">${escapeHtml(item.title)}</button>
     <div class="calendar-task-meta">${item.due_time ? `<span>${escapeHtml(item.due_time)}</span>` : ""}${item.category ? `<span>${escapeHtml(item.category)}</span>` : ""}<span class="quad-pill ${quadrant.css}">${quadrant.text}</span></div>
-    ${item.children?.length ? `<div class="calendar-task-meta">子项 ${item.child_done}/${item.child_count}</div>` : ""}
+    <div class="calendar-task-meta">${escapeHtml(taskTimeLabel(item))}</div>
     <div class="calendar-task-actions">${item.status === "open" ? `<button type="button" data-complete-todo="${item.id}">完成</button>` : ""}<button type="button" data-delete-todo="${item.id}">删除</button></div>
   </article>`;
 }
@@ -137,9 +148,11 @@ async function loadTodoCalendar() {
   appState.todos = [...result.undated, ...result.items];
   const groups = new Map();
   for (const item of items) {
-    const group = groups.get(item.due_date) || [];
+    const groupDate = item.start_date || item.end_date;
+    if (!groupDate) continue;
+    const group = groups.get(groupDate) || [];
     group.push(item);
-    groups.set(item.due_date, group);
+    groups.set(groupDate, group);
   }
   const grid = $("#todo-calendar");
   grid.className = `todo-calendar ${appState.todoView}-view`;
@@ -209,8 +222,11 @@ function clearTodoForm() {
   $("#todo-repeat-frequency").disabled = false;
   $("#todo-category").value = "学习";
   $("#todo-quadrant").value = "1-auto";
-  $("#todo-subtasks").value = "";
-  $("#todo-subtasks").closest("label").hidden = false;
+  $("#todo-start-at").value = "";
+  $("#todo-end-at").value = "";
+  $("#todo-repeat-start-time").value = "";
+  $("#todo-repeat-end-time").value = "";
+  $("#todo-single-time-fields").hidden = false;
   $("#todo-repeat-month-day").value = "";
   $("#todo-repeat-frequency").value = "none";
   $("#todo-repeat-options").hidden = true;
@@ -233,16 +249,19 @@ function editTodo(id, items) {
   $("#todo-quadrant").value = item.urgent_override == null
     ? `${item.important ? 1 : 0}-auto`
     : `${item.important ? 1 : 0}-${item.urgent_override ? 1 : 0}`;
-  $("#todo-due-date").value = item.due_date || "";
-  $("#todo-due-time").value = item.due_time || "";
+  $("#todo-start-at").value = item.start_date ? `${item.start_date}T${item.start_time || "00:00"}` : "";
+  $("#todo-end-at").value = item.end_date ? `${item.end_date}T${item.end_time || "00:00"}` : "";
   $("#todo-reminders").value = item.reminders
     .filter((reminder) => ["pending", "failed", "uncertain"].includes(reminder.status))
     .map((reminder) => localReminderInput(reminder.remind_at)).join("\n");
   $("#todo-repeat-frequency").value = item.recurrence?.frequency || "none";
   $("#todo-repeat-frequency").disabled = !item.recurrence;
   $("#todo-repeat-options").hidden = !item.recurrence;
+  $("#todo-single-time-fields").hidden = Boolean(item.recurrence);
   $("#todo-repeat-start").value = item.recurrence?.start_date || "";
   $("#todo-repeat-end").value = item.recurrence?.end_date || "";
+  $("#todo-repeat-start-time").value = item.recurrence?.start_time || "";
+  $("#todo-repeat-end-time").value = item.recurrence?.end_time || "";
   $("#todo-repeat-month-day").value = item.recurrence?.month_day || "";
   $("#todo-repeat-month-day-wrap").hidden = item.recurrence?.frequency !== "monthly";
   $("#todo-repeat-weekdays").hidden = item.recurrence?.frequency !== "weekly";
@@ -251,8 +270,6 @@ function editTodo(id, items) {
   });
   $("#todo-repeat-reminder-enabled").checked = item.recurrence?.reminder_enabled ?? true;
   $("#todo-repeat-reminder-times").value = (item.recurrence?.reminder_times || []).join(", ");
-  $("#todo-subtasks").value = (item.children || []).map((child) => child.title).join("\n");
-  $("#todo-subtasks").closest("label").hidden = Boolean(item.parent_id);
   $("#todo-cancel-edit").hidden = false;
   openDrawer("todo-editor", "编辑待办");
 }
@@ -286,21 +303,22 @@ async function submitTodo(event) {
   event.preventDefault();
   const id = $("#todo-id").value;
   const item = appState.editingTodo;
-  const dueDate = $("#todo-due-date").value;
-  const dueTime = $("#todo-due-time").value;
   const repeat = $("#todo-repeat-frequency").value;
   const [importantBit, urgentBit] = $("#todo-quadrant").value.split("-");
   const important = Boolean(importantBit);
   const urgent = urgentBit === "auto" ? null : Boolean(Number(urgentBit));
-  const subtasks = $("#todo-subtasks").value.split(/\n+/).map((value) => value.trim()).filter(Boolean);
-  if (dueTime && !dueDate && repeat === "none") { toast("请先选择截止日期，再填写截止时刻。", "error"); return; }
-  if (subtasks.length > 30 || new Set(subtasks).size !== subtasks.length) { toast("子任务不能超过30项，也不能重名。", "error"); return; }
   const payload = {
     title: $("#todo-title").value.trim(), notes: $("#todo-notes").value,
     category: $("#todo-category").value.trim(), priority: item?.priority || 3,
-    important, urgent, due_date: dueDate || null, due_time: dueTime || null,
+    important, urgent,
   };
-  if (!item?.parent_id) payload.subtasks = subtasks;
+  const startAt = $("#todo-start-at").value;
+  const endAt = $("#todo-end-at").value;
+  if (repeat === "none") {
+    const [startDate, startTime] = startAt ? startAt.split("T") : [null, null];
+    const [endDate, endTime] = endAt ? endAt.split("T") : [null, null];
+    Object.assign(payload, { start_date: startDate, start_time: startTime, end_date: endDate, end_time: endTime });
+  }
   const reminders = $("#todo-reminders").value.split(/[\n,，;；]+/).map((value) => value.trim()).filter(Boolean);
   if (reminders.length > 10) { toast("每项任务最多设置10个提醒。", "error"); return; }
   if (!id && reminders.some((value) => !/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(value))) { toast("提醒时间请填写完整日期和时刻，例如 2026-09-28T08:00。", "error"); return; }
@@ -324,7 +342,9 @@ async function submitTodo(event) {
       if (rulesChanged && !end) { toast("修改重复规则时需要设置停止日期。", "error"); return; }
       const seriesPayload = {
         title: payload.title, notes: payload.notes, category: payload.category, priority: payload.priority,
-        important, urgent, subtasks, due_time: dueTime || null,
+        important, urgent,
+        start_time: $("#todo-repeat-start-time").value || null,
+        end_time: $("#todo-repeat-end-time").value || null,
         reminder_enabled: $("#todo-repeat-reminder-enabled").checked && times.length > 0,
         reminder_times: times,
       };
@@ -339,6 +359,8 @@ async function submitTodo(event) {
       } catch (error) { toast(error.message, "error"); }
       return;
     }
+    payload.start_time = $("#todo-repeat-start-time").value || null;
+    payload.end_time = $("#todo-repeat-end-time").value || null;
     payload.reminders = reminders.map((remind_at) => ({ remind_at }));
     try { await api(`/api/v1/todos/${id}?scope=occurrence`, { method: "PATCH", body: JSON.stringify(payload) }); toast("本期任务已更新"); clearTodoForm(); await loadTodos(); }
     catch (error) { toast(error.message, "error"); }
@@ -353,11 +375,13 @@ async function submitTodo(event) {
     if (repeat === "monthly" && (!monthDay || monthDay > 31)) { toast("请填写每月1到31号。", "error"); return; }
     const times = $("#todo-repeat-reminder-times").value.split(/[,，;；\s]+/).filter(Boolean);
     if (times.some((value) => !/^([01]\d|2[0-3]):[0-5]\d$/.test(value))) { toast("重复提醒时刻请使用 HH:MM 格式。", "error"); return; }
-    const repeatPayload = {
-      title: payload.title, notes: payload.notes, category: payload.category, priority: payload.priority,
-      important, urgent, subtasks, frequency: repeat, weekdays: repeat === "weekly" ? weekdays : [],
-      start_date: $("#todo-repeat-start").value || dueDate || localToday(), end_date: end,
-      due_time: dueTime || null, reminder_enabled: $("#todo-repeat-reminder-enabled").checked && times.length > 0,
+      const repeatPayload = {
+        title: payload.title, notes: payload.notes, category: payload.category, priority: payload.priority,
+        important, urgent, frequency: repeat, weekdays: repeat === "weekly" ? weekdays : [],
+        start_date: $("#todo-repeat-start").value || localToday(), end_date: end,
+        start_time: $("#todo-repeat-start-time").value || null,
+        end_time: $("#todo-repeat-end-time").value || null,
+        reminder_enabled: $("#todo-repeat-reminder-enabled").checked && times.length > 0,
       reminder_times: times,
     };
     if (repeat === "monthly") repeatPayload.month_day = monthDay;
